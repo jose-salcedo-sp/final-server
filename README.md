@@ -19,7 +19,7 @@ typedef enum {
     // other actions...
 } ACTIONS;
 ```
-
+---
 ### Login
 #### Request
 ```json
@@ -43,3 +43,4 @@ typedef enum {
     "error": "Invalid username or password"
 }
 ```
+---

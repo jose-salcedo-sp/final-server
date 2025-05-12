@@ -1,7 +1,7 @@
 CC=gcc
 CFLAGS=-Wall -g
 
-SRC = server.c cjson/cJSON.c
+SRC = server.c lib/cjson/cJSON.c lib/queue/queue.c
 OBJ = $(SRC:.c=.o)
 
 all: server

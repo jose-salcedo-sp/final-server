@@ -1,18 +1,25 @@
-
+# Compiler and flags
 CC = gcc
+CFLAGS = -Wall -I../lib/cjson
+LDFLAGS = -lmysqlclient
 
+# Source files
+SRC = data_server.c user_manager.c ../lib/cjson/cJSON.c
+OBJ = $(SRC:.c=.o)
+
+# Output binary
 TARGET = server
 
-SRC = data_server.c
-
-CFLAGS = $(shell mysql_config --cflags)
-LDFLAGS = $(shell mysql_config --libs)
-
+# Default rule
 all: $(TARGET)
 
-$(TARGET): $(SRC)
-	$(CC) -o $(TARGET) $(SRC) $(CFLAGS) $(LDFLAGS)
+$(TARGET): $(OBJ)
+	$(CC) -o $@ $^ $(LDFLAGS)
+	rm -f *.o
 
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Clean rule
 clean:
-	rm -f $(TARGET)
-
+	rm -f $(OBJ) $(TARGET)

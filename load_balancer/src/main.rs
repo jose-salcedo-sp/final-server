@@ -27,6 +27,7 @@ async fn main() -> std::io::Result<()> {
     let proxy = ProxyServer::new(vec![
         "127.0.0.1:6000".parse().unwrap(),
         "127.0.0.1:6001".parse().unwrap(),
+        "127.0.0.1:6002".parse().unwrap(),
     ]);
 
     proxy.clone().check_backends_availability("0.0.0.0:5001".parse().unwrap()).await;

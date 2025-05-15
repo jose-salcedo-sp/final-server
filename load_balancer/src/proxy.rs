@@ -2,8 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::AsyncReadExt;
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 
 use crate::client_messages::{ChatJoin, MsgSend, UUIDv7};
@@ -95,8 +94,16 @@ impl ProxyServer {
                     if let Some(server) = backends.iter_mut().find(|s| s.address == from) {
                         server.last_heartbeat = Some(Instant::now());
                         server.is_up = true;
-                        println!("💗 Received heartbeat from {}", from);
+                    } else {
+                       backends.push(BackendServer {
+                           address: from,
+                           last_heartbeat: None,
+                           is_up: true,
+                       });
+
+                       println!("Added {} to the list of backends!", from);
                     }
+                    println!("💗 Received heartbeat from {}", from);
                 }
             }
         }

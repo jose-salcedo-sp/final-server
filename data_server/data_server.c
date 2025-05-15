@@ -6,7 +6,7 @@
 #include "../lib/cjson/cJSON.h"
 #include "user_manager.h"
 
-enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2};
+enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3};
 
 void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 	char response_text[1024];
@@ -31,7 +31,7 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 					cJSON_AddStringToObject(response_json, "password_hash", password_hash);
 				} else {
 					response_code = 400;
-					sprintf(response_text, "error retreiving password_hash for key: %s", key);
+					sprintf(response_text, "error retrieving password_hash for key: %s", key);
 				}
 			}
 
@@ -39,31 +39,61 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 
 		case CREATE_USER:
 
-		User newUser;
+			User newUser;
 
-		cJSON *usernameItem = cJSON_GetObjectItem(json, "username");
-		cJSON *emailItem = cJSON_GetObjectItem(json, "email");
-		cJSON *passwordItem = cJSON_GetObjectItem(json, "password");
+			cJSON *usernameItem = cJSON_GetObjectItem(json, "username");
+			cJSON *emailItem = cJSON_GetObjectItem(json, "email");
+			cJSON *passwordItem = cJSON_GetObjectItem(json, "password");
 
-		if (usernameItem && usernameItem->valuestring && emailItem && emailItem->valuestring && passwordItem && passwordItem->valuestring) {
-			newUser.username = strdup(usernameItem->valuestring);
-			newUser.email = strdup(emailItem->valuestring);
-			newUser.hash_password = strdup(passwordItem->valuestring);
+			if (usernameItem && usernameItem->valuestring && emailItem && emailItem->valuestring && passwordItem && passwordItem->valuestring) {
+				newUser.username = strdup(usernameItem->valuestring);
+				newUser.email = strdup(emailItem->valuestring);
+				newUser.hash_password = strdup(passwordItem->valuestring);
 }
 			if (create_user(conn, &newUser) == 0){
 				response_code = 200;
 				sprintf(response_text,"User %s with email %s has been stored in the database",newUser.username, newUser.email);
 			} else {
 				response_code = 400;
-				sprintf(response_text,"Unable to generate user",newUser.username, newUser.email);
+				strcpy(response_text,"Unable to generate user");
 			}
 
-		break;
+			free(newUser.username);
+			free(newUser.email);
+			free(newUser.hash_password);
+
+
+			break;
+
+		case GET_USER_INFO:
+			User user;
+			cJSON *info_keyItem = cJSON_GetObjectItemCaseSensitive(json, "key");
+
+			if (info_keyItem && info_keyItem->valuestring){
+				char *key = info_keyItem -> valuestring;
+				if (get_user_info(conn, key, &user) == 0){
+					response_code = 200;
+					sprintf(response_text, "User %s was found with the ID: %d", user.username, user.id);
+
+					cJSON_AddNumberToObject(response_json, "user_id", user.id);
+					cJSON_AddStringToObject(response_json, "username", user.username);
+					cJSON_AddStringToObject(response_json, "email", user.email);
+
+				} else {
+					response_code = 400;
+					sprintf(response_text, "Error retreiving user info for key: %s", key);
+				}
+
+				free(user.username);
+				free(user.email);
+			}
+			
+			break;
 
 		default:
 			strcpy(response_text, "UNKNOWN COMMAND\n");
 			response_code = 404;
-		break;
+			break;
 	}
     
 	cJSON_AddStringToObject(response_json, "response_text", response_text);
@@ -81,12 +111,12 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
     // Copy JSON string to buffer
 	strncpy(response_buffer, json_string, 4096 - 1);
 	response_buffer[4096 - 1] = '\0';
-
+	
 }
 
 int main() {
-	char receive_buffer[4096] = "{ \"action\": 2, \"username\": \"exampleUser3\", \"email\": \"user3@example.com\", \"password\": \"securePassword123\" }";
-	//char receive_buffer[4096] = "{ \"action\": 0, \"key\": \"exampleUser3\"}";
+	//char receive_buffer[4096] = "{ \"action\": 2, \"username\": \"exampleUser3\", \"email\": \"user3@example.com\", \"password\": \"securePassword123\" }";
+	char receive_buffer[4096] = "{ \"action\": 3, \"key\": \"exampleUser3\"}";
 	char response_buffer[4096];
 
 

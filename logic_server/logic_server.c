@@ -14,71 +14,134 @@ void sigchld_handler(int sig) {
 }
 
 /* Function to handle client communication in child process */
+char* process_client_request(const char *raw_json, int backend_fd, bool *handled_locally) {
+    cJSON *json = cJSON_Parse(raw_json);
+    if (!json) {
+        log_warn("Invalid JSON from client");
+        *handled_locally = true;
+        return strdup("{\"error\":\"invalid JSON\"}");
+    }
+
+    cJSON *action_json = cJSON_GetObjectItemCaseSensitive(json, "action");
+    if (!cJSON_IsNumber(action_json)) {
+        log_warn("Missing or invalid 'action'");
+        cJSON_Delete(json);
+        *handled_locally = true;
+        return strdup("{\"error\":\"missing or invalid action\"}");
+    }
+
+    ACTIONS action = (ACTIONS)action_json->valueint;
+
+    switch (action) {
+        case PING:
+            log_info("Handling PING locally");
+            *handled_locally = true;
+            cJSON_Delete(json);
+            return strdup("{\"response\":\"pong\"}");
+
+        case LOGIN:
+        case REGISTER:
+            log_info("Forwarding action %d to DB", action);
+            *handled_locally = false;
+            cJSON_Delete(json);
+            return strdup(raw_json);  // Forward original request to DB
+
+        default:
+            log_warn("Unknown action: %d", action);
+            *handled_locally = true;
+            cJSON_Delete(json);
+            return strdup("{\"error\":\"unknown action\"}");
+    }
+}
+
+int connect_to_db(const char *host, const char *port) {
+    struct addrinfo hints = {0}, *res, *rp;
+    int sock;
+
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(host, port, &hints, &res) != 0) {
+        perror("getaddrinfo");
+        return -1;
+    }
+
+    for (rp = res; rp != NULL; rp = rp->ai_next) {
+        sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sock == -1) continue;
+
+        if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) break;
+
+        close(sock);
+    }
+
+    freeaddrinfo(res);
+    if (rp == NULL) return -1;
+
+    return sock;
+}
+
 void handle_client(int client_sock) {
     char buffer[BUFFER_SIZE];
     int bytes_received;
 
+    // Connect to DB server
+    int db_sock = connect_to_db(DB_IP, DB_PORT);  // use actual DB address/port
+    if (db_sock < 0) {
+        log_err("Failed to connect to DB");
+        close(client_sock);
+        exit(1);
+    }
+
+    struct pollfd fds[2];
+    fds[0].fd = client_sock;
+    fds[0].events = POLLIN;
+    fds[1].fd = db_sock;
+    fds[1].events = POLLIN;
+
     while (1) {
-        bytes_received = recv(client_sock, buffer, BUFFER_SIZE - 1, 0);
-        if (bytes_received <= 0) {
-            if (bytes_received == 0) {
-                log_info("Client disconnected\n");
-            } else {
-                log_err("recv failed");
-            }
+        int ret = poll(fds, 2, -1);
+        if (ret < 0) {
+            log_err("poll");
             break;
         }
 
-        buffer[bytes_received] = '\0';  // Null-terminate the string
+        // Client -> Logic
+        if (fds[0].revents & POLLIN) {
+            bytes_received = recv(client_sock, buffer, BUFFER_SIZE - 1, 0);
+            if (bytes_received <= 0) break;
+            buffer[bytes_received] = '\0';
 
-        log_info("Received raw JSON: %s", buffer);
+            log_info("Received JSON from client: %s", buffer);
 
-        // Parse JSON
-        cJSON *json = cJSON_Parse(buffer);
-        if (!json) {
-            log_warn("Received invalid JSON");
-            continue;
+            // (Optional) parse and validate JSON before forwarding to DB
+			bool handled_locally = false;
+			char *response = process_client_request(buffer, db_sock, &handled_locally);
+		
+			if (handled_locally) {
+				send(client_sock, response, strlen(response), 0);
+			} else {
+				write(db_sock, response, strlen(response));
+			}
+		
+			free(response);
         }
 
-        // Extract action
-        cJSON *action_json = cJSON_GetObjectItemCaseSensitive(json, "action");
-        if (!cJSON_IsNumber(action_json)) {
-            log_warn("Missing or invalid 'action' field");
-            cJSON_Delete(json);
-            continue;
+        // DB -> Logic
+        if (fds[1].revents & POLLIN) {
+            bytes_received = recv(db_sock, buffer, BUFFER_SIZE - 1, 0);
+            if (bytes_received <= 0) break;
+            buffer[bytes_received] = '\0';
+
+            log_info("Received response from DB: %s", buffer);
+
+            // Send response back to client
+            send(client_sock, buffer, bytes_received, 0);
         }
-
-		ACTIONS action = (ACTIONS)action_json->valueint; 
-
-        switch (action) {
-			case PING:  // Example: PING
-                log_info("Action: PING from client");
-                send(client_sock, "{\"response:pong\"}", 17, 0);
-                break;
-
-            case CHATJOIN:  // Example: JOIN_CHAT
-            {
-                cJSON *chat_id = cJSON_GetObjectItemCaseSensitive(json, "chat_id");
-                if (!cJSON_IsString(chat_id)) {
-                    log_warn("Missing or invalid 'chat_id'");
-                    break;
-                }
-                log_info("Client requested to join chat %s", chat_id->valuestring);
-                // You won't implement rooms, but you could acknowledge it
-                send(client_sock, "{\"response\":\"joined\"}", 23, 0);
-                break;
-            }
-
-            default:
-                log_warn("Unknown action: %d", action);
-                send(client_sock, "{\"error\":\"unknown action\"}", 27, 0);
-                break;
-        }
-
-        cJSON_Delete(json);
     }
 
     close(client_sock);
+    close(db_sock);
     exit(0);
 }
 

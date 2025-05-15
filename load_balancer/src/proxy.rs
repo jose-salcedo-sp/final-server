@@ -92,8 +92,13 @@ impl ProxyServer {
                 if msg == b"OK" {
                     let mut backends = self.backends.lock().await;
                     if let Some(server) = backends.iter_mut().find(|s| s.address == from) {
+                        if !server.is_up {
+                            println!("✅ Server: {} is back online!", from);
+                        }
+
                         server.last_heartbeat = Some(Instant::now());
                         server.is_up = true;
+
                     } else {
                        backends.push(BackendServer {
                            address: from,
@@ -101,9 +106,8 @@ impl ProxyServer {
                            is_up: true,
                        });
 
-                       println!("Added {} to the list of backends!", from);
+                       println!("ℹ️ Added {} to the list of backends!", from);
                     }
-                    println!("💗 Received heartbeat from {}", from);
                 }
             }
         }

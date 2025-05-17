@@ -1,69 +1,40 @@
-use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 
-use crate::client_messages::{ChatJoin, MsgSend, UUIDv7};
-
-#[derive(Debug)]
-pub struct SubscribedChat {
-    pub chat_id: UUIDv7,
-    pub subscribed_users: HashSet<SocketAddr>,
-}
-
-#[derive(Debug)]
-pub struct BackendServer {
-    pub address: SocketAddr,
+#[derive(Debug, Clone)]
+pub struct Server {
+    pub udp_addr: SocketAddr,
+    pub tcp_addr: SocketAddr,
     pub last_heartbeat: Option<Instant>,
     pub is_up: bool,
 }
 
 #[derive(Debug)]
-pub struct ProxyServer {
-    pub chats: Mutex<HashMap<UUIDv7, SubscribedChat>>,
-    pub backends: Mutex<Vec<BackendServer>>,
+pub struct ReverseProxy {
+    pub backends: Mutex<Vec<Server>>,
+    next_index: AtomicUsize,
 }
 
-impl ProxyServer {
-    pub fn new(backend_addresses: Vec<SocketAddr>) -> Arc<Self> {
+impl ReverseProxy {
+    pub fn new(backend_addresses: Vec<(SocketAddr, SocketAddr)>) -> Arc<Self> {
         let backends = backend_addresses
             .into_iter()
-            .map(|addr| BackendServer {
-                address: addr,
+            .map(|addrs| Server {
+                tcp_addr: addrs.0,
+                udp_addr: addrs.1,
                 last_heartbeat: None,
                 is_up: false,
             })
             .collect();
 
-        Arc::new(Self {
-            chats: Mutex::new(HashMap::new()),
+        return Arc::new(Self {
             backends: Mutex::new(backends),
-        })
-    }
-
-    pub async fn join_chat(&self, join: ChatJoin, user_addr: SocketAddr) {
-        let mut chats = self.chats.lock().await;
-        let chat = chats.entry(join.chat_id).or_insert_with(|| SubscribedChat {
-            chat_id: join.chat_id,
-            subscribed_users: HashSet::new(),
+            next_index: AtomicUsize::new(0),
         });
-
-        chat.subscribed_users.insert(user_addr);
-    }
-
-    pub async fn send_message_to_chat(&self, msg: MsgSend) {
-        let chats = self.chats.lock().await;
-        if let Some(chat) = chats.get(&msg.chat_id) {
-            let payload = serde_json::to_string(&msg).unwrap();
-            for user in &chat.subscribed_users {
-                // if *user != msg.user_id {
-                // TODO: send `payload` to user socket (via channel or socket lookup)
-                println!("Would send to {}: {}", user, payload);
-                // }
-            }
-        }
     }
 
     pub async fn check_backends_availability(self: Arc<Self>, bind_addr: SocketAddr) {
@@ -80,34 +51,53 @@ impl ProxyServer {
         });
     }
 
+    pub async fn get_available_backend(&self) -> Option<SocketAddr> {
+        let backends = self.backends.lock().await;
+        let available: Vec<_> = backends.iter().filter(|s| s.is_up).collect();
+        if available.is_empty() {
+            return None;
+        }
+
+        let index = self.next_index.fetch_add(1, Ordering::Relaxed) % available.len();
+        return Some(available[index].tcp_addr);
+    }
+
     async fn listen_for_heartbeats(self: Arc<Self>, bind_addr: SocketAddr) {
         let socket = UdpSocket::bind(bind_addr)
             .await
             .expect("Failed to bind UDP socket");
-        let mut buf = [0u8; 16];
+        let mut buf = [0u8; 128]; // increase size to receive full message
 
         loop {
             if let Ok((n, from)) = socket.recv_from(&mut buf).await {
                 let msg = &buf[..n];
-                if msg == b"OK" {
-                    let mut backends = self.backends.lock().await;
-                    if let Some(server) = backends.iter_mut().find(|s| s.address == from) {
-                        if !server.is_up {
-                            println!("✅ Server: {} is back online!", from);
-                        }
+                let message = String::from_utf8_lossy(msg);
 
-                        server.last_heartbeat = Some(Instant::now());
-                        server.is_up = true;
+                let mut backends = self.backends.lock().await;
+                if let Some(server) = backends.iter_mut().find(|s| s.udp_addr == from) {
+                    server.last_heartbeat = Some(Instant::now());
 
-                    } else {
-                       backends.push(BackendServer {
-                           address: from,
-                           last_heartbeat: None,
-                           is_up: true,
-                       });
-
-                       println!("ℹ️ Added {} to the list of backends!", from);
+                    if !server.is_up {
+                        println!("✅ Server {} is back online!", from);
                     }
+
+                    server.is_up = true;
+
+                    if let Ok(tcp_addr) = message.parse::<SocketAddr>() {
+                        server.tcp_addr = tcp_addr;
+                    } else {
+                        eprintln!("⚠️ Invalid TCP address from backend: {}", message);
+                    }
+                } else {
+                    let tcp_addr = message.parse::<SocketAddr>().unwrap();
+                    println!("🆕 New backend: UDP={} TCP={:?}", from, tcp_addr);
+
+                    backends.push(Server {
+                        udp_addr: from,
+                        tcp_addr,
+                        last_heartbeat: Some(Instant::now()),
+                        is_up: true,
+                    });
                 }
             }
         }
@@ -121,7 +111,7 @@ impl ProxyServer {
                     if let Some(last) = backend.last_heartbeat {
                         if last.elapsed() > Duration::from_secs(1) {
                             if backend.is_up {
-                                println!("⚠️ Backend {} timed out", backend.address);
+                                println!("⚠️ Backend {} timed out", backend.udp_addr);
                             }
                             backend.is_up = false;
                         }
@@ -131,7 +121,7 @@ impl ProxyServer {
                 }
             }
 
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(2000)).await;
         }
     }
 }

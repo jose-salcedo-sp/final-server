@@ -1,7 +1,7 @@
-CC=gcc
-CFLAGS=-Wall -Wextra -g
-SRC=logic_server.c ../lib/cjson/cJSON.c
-OUT=logic_server
+CC = gcc
+CFLAGS = -Wall -Wextra -g
+SRC = logic_server.c udp_lb_daemon.c ../lib/cjson/cJSON.c
+OUT = logic_server
 
 all:
 	$(CC) $(CFLAGS) -o $(OUT) $(SRC)

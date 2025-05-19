@@ -1,0 +1,9 @@
+{
+    "mode": "fl",
+    "frontend_tcp_addr": "0.0.0.0:3001",
+    "backend_heartbeat_udp_addr": "0.0.0.0:5000",
+    "backend_addrs": [
+        "0.0.0.0:7000 0.0.0.0:7001",
+        "0.0.0.0:7002 0.0.0.0:7003"
+    ]
+}

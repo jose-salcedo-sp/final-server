@@ -4,11 +4,7 @@
 ### SETUP
 
 1. Make sure you have cargo tool installed
-<<<<<<< HEAD
-2. Create a `load_balancer_config.json` file in the root of your project that has the following shape:
-=======
 2. Create a `frontend_logic_rp_config.json` file in the root of your project that has the following shape:
->>>>>>> 699e731 (Create README.md)
 
 ```json
 {
@@ -25,11 +21,7 @@
 3. Build the project using `cargo build`
 4. Run the tcp server using you config file
 ```bash
-<<<<<<< HEAD
-./target/debug/load_balancer --config-path ./load_balancer_config.json
-=======
 ./target/debug/load_balancer --config-path ./frontend_logic_rp_config.json
->>>>>>> 699e731 (Create README.md)
 ```
 5. Success! You should see a message like this:
 ```
@@ -105,6 +97,40 @@ And your connection from the client should be terminated.
 ```
 5. Success! You should see a message like this:
 ```
-ℹ️ Running FE <-> LOGIC load balancer
-🔌 FL Listening on 0.0.0.0:3001
+ℹ️ Running LOGIC <-> DATA load balancer
+🔌 Frontend TCP listening on 0.0.0.0:3001
+🔌 Backend TCP listening on 0.0.0.0:3000
 ```
+
+### TEST USAGE
+Attached to this repo comes a `test_server.py` file which you should be able to run a mock logical server by running the following commands:
+
+`Logic Server`:
+```bash
+python3 test_server.py \
+  --proxy-udp-port 5001 \
+  --proxy-tcp-port 3001 \
+  --backend-tcp-port 7002 \
+  --backend-udp-port 7003
+```
+`Data Server`
+```bash
+python3 test_server.py \
+  --proxy-udp-port 5000 \
+  --proxy-tcp-port 3000 \
+  --backend-tcp-port 7000 \
+  --backend-udp-port 7001
+```
+
+You should see this on your load balancer terminal:
+```
+ℹ️ Running LOGIC <-> DATA load balancer
+🔌 Frontend TCP listening on 0.0.0.0:3001
+🔌 Backend TCP listening on 0.0.0.0:3000
+🫡 Received ID from 127.0.0.1:7003 — matched Frontend 0.0.0.0:7003, responded with OK
+✅ Frontend 127.0.0.1:7003 is back online!
+🫡 Received ID from 127.0.0.1:7001 — matched Backend 0.0.0.0:7001, responded with OK
+✅ Backend 127.0.0.1:7001 is back online!
+```
+
+Now you should be able to send messages between both servers through the proxy in a full duplex non-blocking communication through the terminal.

@@ -1,10 +1,11 @@
 use std::fs;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::str;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::Mutex;
 
@@ -113,26 +114,31 @@ impl ReverseProxyFl {
             let proxy = self.clone();
             tokio::spawn(async move {
                 println!("ℹ️ FL Client {} connected", addr);
-                let mut buf = vec![0u8; 1024];
-                loop {
-                    match client.read(&mut buf).await {
-                        Ok(0) => return,
-                        Ok(n) => {
-                            if let Some(backend_addr) = proxy.get_available_backend().await {
-                                if let Ok(mut backend_stream) =
-                                    TcpStream::connect(backend_addr).await
-                                {
-                                    let _ = backend_stream.write_all(&buf[..n]);
-                                } else {
-                                    let _ =
-                                        client.write_all(b"Could not connect to backend\n").await;
+
+                if let Some(backend_addr) = proxy.get_available_backend().await {
+                    match TcpStream::connect(backend_addr).await {
+                        Ok(mut backend_stream) => {
+                            println!(
+                                "🔁 Forwarding traffic between client and backend {}",
+                                backend_addr
+                            );
+
+                            match tokio::io::copy_bidirectional(&mut client, &mut backend_stream).await {
+                                Ok((c2b, b2c)) => {
+                                    println!("📊 Connection closed: client→backend={}B, backend→client={}B", c2b, b2c);
                                 }
-                            } else {
-                                let _ = client.write_all(b"No available backend\n").await;
+                                Err(e) => {
+                                    eprintln!("❌ Copy error: {}", e);
+                                }
                             }
                         }
-                        Err(_) => return,
+                        Err(e) => {
+                            eprintln!("❌ Could not connect to backend {}: {}", backend_addr, e);
+                            let _ = client.write_all(b"Could not connect to backend\n").await;
+                        }
                     }
+                } else {
+                    let _ = client.write_all(b"No available backend\n").await;
                 }
             });
         }

@@ -4,7 +4,11 @@
 ### SETUP
 
 1. Make sure you have cargo tool installed
+<<<<<<< HEAD
 2. Create a `load_balancer_config.json` file in the root of your project that has the following shape:
+=======
+2. Create a `frontend_logic_rp_config.json` file in the root of your project that has the following shape:
+>>>>>>> 699e731 (Create README.md)
 
 ```json
 {
@@ -21,7 +25,11 @@
 3. Build the project using `cargo build`
 4. Run the tcp server using you config file
 ```bash
+<<<<<<< HEAD
 ./target/debug/load_balancer --config-path ./load_balancer_config.json
+=======
+./target/debug/load_balancer --config-path ./frontend_logic_rp_config.json
+>>>>>>> 699e731 (Create README.md)
 ```
 5. Success! You should see a message like this:
 ```
@@ -67,3 +75,36 @@ Backend terminal:
 💬 Message from client via proxy: Hello from frontend
 ```
 And your connection from the client should be terminated.
+---
+## `LOGIC <-> DATA` REVERSE PROXY
+### SETUP
+
+1. Make sure you have cargo tool installed
+2. Create a `logic_data_rp_config.json` file in the root of your project that has the following shape:
+
+```json
+{
+    "mode": "ld",
+    "backend_tcp_addr": "0.0.0.0:3000",
+    "frontend_tcp_addr": "0.0.0.0:3001",
+    "backend_heartbeat_udp_addr": "0.0.0.0:5000",
+    "frontend_heartbeat_udp_addr": "0.0.0.0:5001",
+    "backend_addrs": [
+        "0.0.0.0:7000 0.0.0.0:7001"
+    ],
+    "frontend_addrs": [
+        "0.0.0.0:7002 0.0.0.0:7003"
+    ]
+}
+```
+
+3. Build the project using `cargo build`
+4. Run the tcp server using you config file
+```bash
+./target/debug/load_balancer --config-path ./logic_data_rp_config.json
+```
+5. Success! You should see a message like this:
+```
+ℹ️ Running FE <-> LOGIC load balancer
+🔌 FL Listening on 0.0.0.0:3001
+```

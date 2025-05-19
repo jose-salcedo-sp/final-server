@@ -3,18 +3,44 @@ import threading
 import time
 
 # === CONFIGURATION ===
-PROXY_UDP_ADDR = ("127.0.0.1", 5000)  # Where to send heartbeats
-BACKEND_TCP_IP = "127.0.0.1"
-BACKEND_TCP_PORT = 7000               # Port this backend listens on
-HEARTBEAT_INTERVAL = 1                # Seconds between heartbeats
+PROXY_UDP_ADDR = ("127.0.0.1", 5000)  # Load balancer's heartbeat UDP address
+BACKEND_TCP_IP = "0.0.0.0"
+BACKEND_TCP_PORT = 7002
+BACKEND_UDP_IP = "0.0.0.0"
+BACKEND_UDP_PORT = 7003
+HEARTBEAT_INTERVAL = 1  # Seconds
+
+state_lock = threading.Lock()
+send_mode = "ADDR"  # Initial state: send "<udp> <tcp>"
 
 # === HEARTBEAT SENDER ===
-def send_heartbeat():
-    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    tcp_addr_string = b"OK"
+def send_heartbeat(udp_sock):
+    global send_mode
     while True:
-        udp_sock.sendto(tcp_addr_string, PROXY_UDP_ADDR)
+        with state_lock:
+            if send_mode == "ADDR":
+                msg = f"{BACKEND_UDP_IP}:{BACKEND_UDP_PORT} {BACKEND_TCP_IP}:{BACKEND_TCP_PORT}".encode()
+            elif send_mode == "OK":
+                msg = b"OK"
+            else:
+                msg = b"UNKNOWN"
+        udp_sock.sendto(msg, PROXY_UDP_ADDR)
         time.sleep(HEARTBEAT_INTERVAL)
+
+
+# === HEARTBEAT RECEIVER ===
+def listen_for_proxy_messages(udp_sock):
+    global send_mode
+    print(f"📡 Listening for LB commands on UDP {BACKEND_UDP_IP}:{BACKEND_UDP_PORT}")
+    while True:
+        data, addr = udp_sock.recvfrom(128)
+        message = data.decode().strip()
+        print(f"📨 Received from proxy ({addr}): {message}")
+        with state_lock:
+            if message == "OK":
+                send_mode = "OK"
+            elif message == "AUTH":
+                send_mode = "ADDR"
 
 # === TCP SERVER ===
 def tcp_server():
@@ -36,5 +62,9 @@ def tcp_server():
 
 # === MAIN ===
 if __name__ == "__main__":
-    threading.Thread(target=send_heartbeat, daemon=True).start()
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_sock.bind((BACKEND_UDP_IP, BACKEND_UDP_PORT))
+
+    threading.Thread(target=send_heartbeat, args=(udp_sock,), daemon=True).start()
+    threading.Thread(target=listen_for_proxy_messages, args=(udp_sock,), daemon=True).start()
     tcp_server()

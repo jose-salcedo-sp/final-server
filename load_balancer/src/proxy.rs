@@ -13,6 +13,7 @@ use crate::config::Config;
 
 #[derive(Debug, Clone)]
 pub struct Server {
+    pub addr_identifier: Option<SocketAddr>,
     pub udp_addr: SocketAddr,
     pub tcp_addr: SocketAddr,
     pub last_heartbeat: Option<Instant>,
@@ -94,6 +95,7 @@ impl ReverseProxy {
                 let tcp = parts.next()?.parse().ok()?;
                 let udp = parts.next()?.parse().ok()?;
                 Some(Server {
+                    addr_identifier: None,
                     tcp_addr: tcp,
                     udp_addr: udp,
                     last_heartbeat: None,
@@ -160,17 +162,63 @@ impl ReverseProxyFl {
         loop {
             if let Ok((n, from)) = socket.recv_from(&mut buf).await {
                 let msg = &buf[..n];
-                let message = String::from_utf8_lossy(msg);
-                println!("🪲 recieved: {} from {}", message, from);
-
+                let message = String::from_utf8_lossy(msg).trim().to_string();
                 let mut backends = self_.backends.lock().await;
-                if let Some(server) = backends.iter_mut().find(|s| s.udp_addr == from) {
-                    if message == "OK" {
-                        server.last_heartbeat = Some(Instant::now());
-                        if !server.is_up {
-                            println!("✅ Server {} is back online!", from);
+
+                match message.as_str() {
+                    "OK" => {
+                        if let Some(server) = backends
+                            .iter_mut()
+                            .filter(|s| s.addr_identifier.is_some())
+                            .find(|s| s.addr_identifier.unwrap() == from)
+                        {
+                            server.last_heartbeat = Some(Instant::now());
+                            if !server.is_up {
+                                println!("✅ Server {} is back online!", from);
+                            }
+                            server.is_up = true;
+                        } else {
+                            println!("❓ OK from unknown sender {}", from);
+                            let _ = socket.send_to(b"AUTH", from).await;
                         }
-                        server.is_up = true;
+                    }
+
+                    _ if message.contains(' ') => {
+                        let parts: Vec<&str> = message.split_whitespace().collect();
+                        if parts.len() == 2 {
+                            let parsed_udp = parts[0].parse::<SocketAddr>();
+                            let parsed_tcp = parts[1].parse::<SocketAddr>();
+
+                            match (parsed_udp, parsed_tcp) {
+                                (Ok(udp_addr), Ok(tcp_addr)) => {
+                                    if let Some(server) = backends
+                                        .iter_mut()
+                                        .find(|s| s.udp_addr == udp_addr && s.tcp_addr == tcp_addr)
+                                    {
+                                        let _ = socket.send_to(b"OK", from).await;
+                                        server.addr_identifier = Some(from);
+                                        println!("🫡 Received ID from {} — matched server {}, responded with OK", from, udp_addr);
+                                    } else {
+                                        println!(
+                                            "❌ Address pair {} {} not recognized",
+                                            parts[0], parts[1]
+                                        );
+                                    }
+                                }
+                                _ => {
+                                    println!(
+                                        "❌ Failed to parse heartbeat message: \"{}\"",
+                                        message
+                                    );
+                                }
+                            }
+                        } else {
+                            println!("❌ Malformed heartbeat message: \"{}\"", message);
+                        }
+                    }
+
+                    _ => {
+                        println!("⚠️ Unexpected message: \"{}\" from {}", message, from);
                     }
                 }
             }

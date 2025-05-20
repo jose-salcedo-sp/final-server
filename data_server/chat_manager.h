@@ -2,12 +2,19 @@
 #include<mysql/mysql.h>
 
 #define MAX_PARTICIPANTS 10
+#define MAX_CHATS 100
+#define MAX_STRING 256
 
 typedef struct {
 	int id;
 	char *chat_name;
 	int is_group;
 	int created_by;
+
+	char *last_message_content;
+	char *last_message_type;
+	char *last_message_timestamp;
+	char *last_message_by;
 } Chat;
 
 typedef struct {
@@ -20,3 +27,4 @@ typedef struct {
 int create_chat(MYSQL *conn, Chat *chat);
 int add_to_chat(MYSQL *conn, int chat_id, int user_id, int is_admin);
 int send_message(MYSQL *conn, Message *message);
+int get_chats(MYSQL *conn, int user_id, char *last_update_timestamp, Chat chats[MAX_CHATS]);

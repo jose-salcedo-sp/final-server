@@ -7,7 +7,10 @@
 #include "user_manager.h"
 #include "chat_manager.h"
 
-enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3, CREATE_CHAT = 4, ADD_TO_GROUP_CHAT = 5, SEND_MESSAGE = 6};
+void reset_database(MYSQL *conn);
+
+enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3, CREATE_CHAT = 4, ADD_TO_GROUP_CHAT = 5, SEND_MESSAGE = 6, 
+	GET_CHATS = 7};
 
 void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 	char response_text[1024];
@@ -217,6 +220,59 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 			}
 			break;
 
+		case GET_CHATS:
+			cJSON *Item_gc_user_id = cJSON_GetObjectItemCaseSensitive(json, "user_id");
+			cJSON *Item_gc_last_update_timestamp = cJSON_GetObjectItemCaseSensitive(json, "last_update_timestamp")	;
+
+			if (Item_gc_user_id && Item_gc_last_update_timestamp && cJSON_IsNumber(Item_gc_user_id) &&
+			    (cJSON_IsString(Item_gc_last_update_timestamp) || cJSON_IsNull(Item_gc_last_update_timestamp))) {
+
+  				Chat chats[MAX_CHATS];
+				int user_id = Item_gc_user_id->valueint;
+
+			    char *last_update_timestamp = NULL;
+    			if (!cJSON_IsNull(Item_gc_last_update_timestamp)) {
+    		    	last_update_timestamp = Item_gc_last_update_timestamp->valuestring;
+    			}
+
+			    int chat_count = get_chats(conn, user_id, last_update_timestamp, chats);
+			    if (chat_count > -1){
+					sprintf(response_text, "%d chats succesfully retreived", chat_count);
+					response_code = 200;
+
+					cJSON *chats_array = cJSON_CreateArray();
+
+					for (int i = 0; i < chat_count; i++){
+            			printf("Chat: %s | Last message from %s: %s\n",
+						chats[i].chat_name,
+						chats[i].last_message_by,
+						chats[i].last_message_content);
+
+						cJSON *chat_json = cJSON_CreateObject();
+						
+						cJSON_AddNumberToObject(chat_json, "chat_id", chats[i].id);
+						cJSON_AddStringToObject(chat_json, "chat_name", chats[i].chat_name);
+						cJSON_AddStringToObject(chat_json, "last_message_content", chats[i].last_message_content);
+						cJSON_AddStringToObject(chat_json, "last_message_type", chats[i].last_message_type);
+						cJSON_AddStringToObject(chat_json, "last_message_timestamp", chats[i].last_message_timestamp);
+						cJSON_AddStringToObject(chat_json, "last_message_sender", chats[i].last_message_by);
+
+						cJSON_AddItemToArray(chats_array, chat_json);
+					}
+
+					cJSON_AddItemToObject(response_json, "chats_array", chats_array);
+				} else {
+					strcpy(response_text, "Chats couldn't be retreived");
+					response_code = 400;
+				}
+			} else {
+				strcpy(response_text, "Wrong format for the parameters");
+				response_code = 400;
+
+			}
+			
+			break;
+
 
 
 		default:
@@ -246,9 +302,10 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 int main() {
 	//char receive_buffer[4096] = "{ \"action\": 2, \"username\": \"ehinojosa\", \"email\": \"ehinojosa@example.com\", \"password\": \"sdahsdiuh\" }";
 	//char receive_buffer[4096] = "{ \"action\": 3, \"key\": \"exampleUser3\"}";
-	//char receive_buffer[4096] = "{\"action\": 4, \"is_group\": true, \"chat_name\": \"New Chat\", \"created_by\": 7, \"participant_ids\": [4,6,9,10]}";
+	//char receive_buffer[4096] = "{\"action\": 4, \"is_group\": true, \"chat_name\": \"Group Chat 2\", \"created_by\": 12, \"participant_ids\": [4,6]}";
 	//char receive_buffer[4096] = "{\"action\": 5, \"chat_id\": 1, \"added_by\": 7, \"participant_ids\": [12]}";
-	char receive_buffer[4096] = "{\"action\": 6, \"chat_id\":1, \"sender_id\": 12, \"content\": \"Hello World!\", \"message_type\": \"user\"}";
+	//char receive_buffer[4096] = "{\"action\": 6, \"chat_id\":2, \"sender_id\": 12, \"content\": \"Hello Everyone! Welcome to the groupchat\", \"message_type\": \"user\"}";
+	char receive_buffer[4096] = "{\"action\": 7, \"user_id\": 12, \"last_update_timestamp\": null}";
 	char response_buffer[4096];
 
 
@@ -276,6 +333,8 @@ int main() {
 	
 	printf("\nResponse:\n%s\n",response_buffer);
 
+
+
 	//mysql_free_result(res);
     mysql_close(conn);
 
@@ -296,3 +355,21 @@ int main() {
         printf("%s\n", row[0]);
     }
 */
+
+void reset_database(MYSQL *conn) {
+    const char *queries[] = {
+        "SET FOREIGN_KEY_CHECKS = 0;",
+        "TRUNCATE TABLE messages;",
+        "TRUNCATE TABLE chats;",
+        "TRUNCATE TABLE chat_participants;",
+        "SET FOREIGN_KEY_CHECKS = 1;"
+    };
+
+    for (int i = 0; i < sizeof(queries) / sizeof(queries[0]); i++) {
+        if (mysql_query(conn, queries[i])) {
+            fprintf(stderr, "Query failed: %s\nError: %s\n", queries[i], mysql_error(conn));
+            // Optionally exit or rollback if using transactions
+        }
+    }
+}
+

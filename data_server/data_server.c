@@ -9,8 +9,7 @@
 
 void reset_database(MYSQL *conn);
 
-enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3, CREATE_CHAT = 4, ADD_TO_GROUP_CHAT = 5, SEND_MESSAGE = 6, 
-	GET_CHATS = 7};
+enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3, CREATE_CHAT = 4, ADD_TO_GROUP_CHAT = 5, SEND_MESSAGE = 6, GET_CHATS = 7, GET_CHAT_MESSAGES = 8};
 
 void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 	char response_text[1024];
@@ -273,6 +272,60 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 			
 			break;
 
+		case GET_CHAT_MESSAGES:
+			cJSON *Item_gcm_chat_id = cJSON_GetObjectItemCaseSensitive(json, "chat_id");
+			cJSON *Item_gcm_last_update_timestamp = cJSON_GetObjectItemCaseSensitive(json, "last_update_timestamp")	;
+
+			if (Item_gcm_chat_id && Item_gcm_last_update_timestamp && cJSON_IsNumber(Item_gcm_chat_id) &&
+			    (cJSON_IsString(Item_gcm_last_update_timestamp) || cJSON_IsNull(Item_gcm_last_update_timestamp))) {
+
+  				Message messages[MAX_MESSAGES];
+				int chat_id = Item_gcm_chat_id->valueint;
+
+			    char *last_update_timestamp = NULL;
+    			if (!cJSON_IsNull(Item_gcm_last_update_timestamp)) {
+    		    	last_update_timestamp = Item_gcm_last_update_timestamp->valuestring;
+    			}
+
+			    int message_count = get_chat_messages(conn, chat_id, last_update_timestamp, messages);
+			    if (message_count > -1){
+					sprintf(response_text, "%d messages succesfully retreived", message_count);
+					response_code = 200;
+
+					cJSON *messages_array = cJSON_CreateArray();
+
+					for (int i = 0; i < message_count; i++){
+            			printf("Message from %s %s: %s | sent %s\n",
+						messages[i].message_type,
+						messages[i].sender_username,
+						messages[i].content,
+					  	messages[i].created_at
+					  );
+
+						cJSON *message_json = cJSON_CreateObject();	
+						cJSON_AddNumberToObject(message_json, "message_id", messages[i].message_id);
+						cJSON_AddNumberToObject(message_json, "sender_id", messages[i].sender_id);
+						cJSON_AddStringToObject(message_json, "sender_username", messages[i].sender_username);
+						cJSON_AddStringToObject(message_json, "content", messages[i].content);
+						cJSON_AddStringToObject(message_json, "message_type", messages[i].message_type);
+						cJSON_AddStringToObject(message_json, "created_at", messages[i].created_at);
+
+
+						cJSON_AddItemToArray(messages_array, message_json);
+					}
+
+					cJSON_AddItemToObject(response_json, "messages_array", messages_array);
+				} else {
+					strcpy(response_text, "Messages couldn't be retreived");
+					response_code = 400;
+				}
+			} else {
+				strcpy(response_text, "Wrong format for the parameters");
+				response_code = 400;
+
+			}
+			break;
+
 
 
 		default:
@@ -305,7 +358,9 @@ int main() {
 	//char receive_buffer[4096] = "{\"action\": 4, \"is_group\": true, \"chat_name\": \"Group Chat 2\", \"created_by\": 12, \"participant_ids\": [4,6]}";
 	//char receive_buffer[4096] = "{\"action\": 5, \"chat_id\": 1, \"added_by\": 7, \"participant_ids\": [12]}";
 	//char receive_buffer[4096] = "{\"action\": 6, \"chat_id\":2, \"sender_id\": 12, \"content\": \"Hello Everyone! Welcome to the groupchat\", \"message_type\": \"user\"}";
-	char receive_buffer[4096] = "{\"action\": 7, \"user_id\": 12, \"last_update_timestamp\": null}";
+	//char receive_buffer[4096] = "{\"action\": 7, \"user_id\": 12, \"last_update_timestamp\": null}";
+	char receive_buffer[4096] = "{\"action\": 8, \"chat_id\": 2, \"last_update_timestamp\": null}";
+
 	char response_buffer[4096];
 
 

@@ -1,5 +1,6 @@
 #include "chat_manager.h"
 #include <mysql/mysql.h>
+#include <mysql/mysql_com.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -82,25 +83,6 @@ int get_chats(MYSQL *conn, int user_id, char *last_update_timestamp, Chat chats[
     int chat_count = 0;
 
     if (last_update_timestamp == NULL) {
-		/*
-        sprintf(query,
-            "SELECT "
-            "c.chat_id, "
-    		"c.chat_name, "
-    		"c.is_group, "
-
-    		"m.content AS last_message_content,"
-    		"m.message_type AS last_message_type,"
-			"m.created_at AS last_message_timestamp,"
-    		"u.username AS last_message_sender_username "
-            "FROM chats c "
-            "JOIN chat_participants cp ON cp.chat_id = c.chat_id "
-            "LEFT JOIN messages m ON m.message_id = c.last_message_id "
-            "LEFT JOIN users u ON u.user_id = m.sender_id "
-            "WHERE cp.user_id = %d "
-            "ORDER BY c.chat_id", user_id);
-		*/
-		
 		snprintf(query, sizeof(query), "SELECT c.chat_id, c.chat_name, c.is_group, m.content AS last_message_content, m.message_type AS last_message_type, m.created_at AS last_message_timestamp, u.username AS last_message_sender_username FROM chats c JOIN chat_participants cp ON cp.chat_id = c.chat_id LEFT JOIN messages m ON m.message_id = c.last_message_id LEFT JOIN users u ON u.user_id = m.sender_id WHERE cp.user_id = %d ORDER BY c.chat_id", user_id);
 		
     } else {
@@ -138,4 +120,47 @@ int get_chats(MYSQL *conn, int user_id, char *last_update_timestamp, Chat chats[
 
     mysql_free_result(res);
     return chat_count;
+}
+
+int get_chat_messages(MYSQL *conn, int chat_id, char *last_update_timestamp, Message messages[MAX_MESSAGES]) {
+    char query[2048];
+    MYSQL_RES *res;
+    MYSQL_ROW row;
+    int messages_count = 0;
+
+    if (last_update_timestamp == NULL) {
+		snprintf(query, sizeof(query), "SELECT m.message_id, m.sender_id, u.username AS sender_username, m.content, m.message_type, m.created_at FROM messages m JOIN users u ON u.user_id = m.sender_id WHERE m.chat_id = %d AND m.is_deleted = 0", chat_id);
+		
+    } else {
+		snprintf(query, sizeof(query), "SELECT m.message_id, m.sender_id, u.username AS sender_username, m.content, m.message_type, m.created_at FROM messages m JOIN users u ON u.user_id = m.sender_id WHERE m.chat_id = %d AND m.is_deleted = 0 AND (m.created_at > %s)", chat_id, last_update_timestamp);
+    }
+
+	printf("query: \n%s\n", query);
+
+    if (mysql_query(conn, query)) {
+        fprintf(stderr, "Query failed: %s\n", mysql_error(conn));
+        return -1;
+    }
+
+    res = mysql_store_result(conn);
+    if (!res) {
+        fprintf(stderr, "Store result failed: %s\n", mysql_error(conn));
+        return -1;
+    }
+
+ 	while ((row = mysql_fetch_row(res)) != NULL) {
+    	Message *message = &messages[messages_count++];
+
+    	message-> message_id = row[0] ? atoi(row[0]) : 0;
+    	message-> sender_id = row[1] ? atoi(row[1]) : 0;
+
+    	message-> sender_username = row[2] ? row[2] : "";
+
+    	message-> content = row[3] ? row[3] : "";
+    	message-> message_type = row[4] ? row[4] : "";
+    	message-> created_at = row[5] ? row[5] : "";	
+	}
+
+    mysql_free_result(res);
+    return messages_count;
 }

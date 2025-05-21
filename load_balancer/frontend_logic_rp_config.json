@@ -1,6 +1,5 @@
 {
     "mode": "fl",
-    "backend_tcp_addr": "0.0.0.0:3000",
     "frontend_tcp_addr": "0.0.0.0:3001",
     "backend_heartbeat_udp_addr": "0.0.0.0:5000",
     "backend_addrs": [

@@ -1,18 +1,19 @@
 use std::fs;
-use std::io::Write;
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
 use std::path::Path;
+use std::str;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, UdpSocket};
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::Mutex;
 
 use crate::config::Config;
 
 #[derive(Debug, Clone)]
 pub struct Server {
+    pub addr_identifier: Option<SocketAddr>,
     pub udp_addr: SocketAddr,
     pub tcp_addr: SocketAddr,
     pub last_heartbeat: Option<Instant>,
@@ -26,7 +27,6 @@ pub enum ReverseProxy {
 
 pub struct ReverseProxyFl {
     pub frontend_tcp_addr: SocketAddr,
-    pub backend_tcp_addr: SocketAddr,
     pub backend_heartbeat_udp_addr: SocketAddr,
     pub backends: Mutex<Vec<Server>>,
     pub next_index: AtomicUsize,
@@ -49,7 +49,6 @@ impl ReverseProxy {
 
         match config {
             Config::Fl {
-                backend_tcp_addr,
                 backend_heartbeat_udp_addr,
                 frontend_tcp_addr,
                 backend_addrs,
@@ -57,7 +56,6 @@ impl ReverseProxy {
                 let backend_servers = Self::parse_addr_pairs(&backend_addrs);
                 Arc::new(Self::Fl(Arc::new(ReverseProxyFl {
                     frontend_tcp_addr,
-                    backend_tcp_addr,
                     backend_heartbeat_udp_addr,
                     backends: Mutex::new(backend_servers),
                     next_index: AtomicUsize::new(0),
@@ -94,6 +92,7 @@ impl ReverseProxy {
                 let tcp = parts.next()?.parse().ok()?;
                 let udp = parts.next()?.parse().ok()?;
                 Some(Server {
+                    addr_identifier: None,
                     tcp_addr: tcp,
                     udp_addr: udp,
                     last_heartbeat: None,
@@ -115,24 +114,31 @@ impl ReverseProxyFl {
             let proxy = self.clone();
             tokio::spawn(async move {
                 println!("ℹ️ FL Client {} connected", addr);
-                let mut buf = vec![0u8; 1024];
-                loop {
-                    match client.read(&mut buf).await {
-                        Ok(0) => return,
-                        Ok(n) => {
-                            if let Some(backend_addr) = proxy.get_available_backend().await {
-                                if let Ok(mut backend_stream) = TcpStream::connect(backend_addr) {
-                                    let _ = backend_stream.write_all(&buf[..n]);
-                                } else {
-                                    let _ =
-                                        client.write_all(b"Could not connect to backend\n").await;
+
+                if let Some(backend_addr) = proxy.get_available_backend().await {
+                    match TcpStream::connect(backend_addr).await {
+                        Ok(mut backend_stream) => {
+                            println!(
+                                "🔁 Forwarding traffic between client and backend {}",
+                                backend_addr
+                            );
+
+                            match tokio::io::copy_bidirectional(&mut client, &mut backend_stream).await {
+                                Ok((c2b, b2c)) => {
+                                    println!("📊 Connection closed: client→backend={}B, backend→client={}B", c2b, b2c);
                                 }
-                            } else {
-                                let _ = client.write_all(b"No available backend\n").await;
+                                Err(e) => {
+                                    eprintln!("❌ Copy error: {}", e);
+                                }
                             }
                         }
-                        Err(_) => return,
+                        Err(e) => {
+                            eprintln!("❌ Could not connect to backend {}: {}", backend_addr, e);
+                            let _ = client.write_all(b"Could not connect to backend\n").await;
+                        }
                     }
+                } else {
+                    let _ = client.write_all(b"No available backend\n").await;
                 }
             });
         }
@@ -160,17 +166,63 @@ impl ReverseProxyFl {
         loop {
             if let Ok((n, from)) = socket.recv_from(&mut buf).await {
                 let msg = &buf[..n];
-                let message = String::from_utf8_lossy(msg);
-                println!("🪲 recieved: {} from {}", message, from);
-
+                let message = String::from_utf8_lossy(msg).trim().to_string();
                 let mut backends = self_.backends.lock().await;
-                if let Some(server) = backends.iter_mut().find(|s| s.udp_addr == from) {
-                    if message == "OK" {
-                        server.last_heartbeat = Some(Instant::now());
-                        if !server.is_up {
-                            println!("✅ Server {} is back online!", from);
+
+                match message.as_str() {
+                    "OK" => {
+                        if let Some(server) = backends
+                            .iter_mut()
+                            .filter(|s| s.addr_identifier.is_some())
+                            .find(|s| s.addr_identifier.unwrap() == from)
+                        {
+                            server.last_heartbeat = Some(Instant::now());
+                            if !server.is_up {
+                                println!("✅ Server {} is back online!", from);
+                            }
+                            server.is_up = true;
+                        } else {
+                            println!("❓ OK from unknown sender {}", from);
+                            let _ = socket.send_to(b"AUTH", from).await;
                         }
-                        server.is_up = true;
+                    }
+
+                    _ if message.contains(' ') => {
+                        let parts: Vec<&str> = message.split_whitespace().collect();
+                        if parts.len() == 2 {
+                            let parsed_udp = parts[0].parse::<SocketAddr>();
+                            let parsed_tcp = parts[1].parse::<SocketAddr>();
+
+                            match (parsed_udp, parsed_tcp) {
+                                (Ok(udp_addr), Ok(tcp_addr)) => {
+                                    if let Some(server) = backends
+                                        .iter_mut()
+                                        .find(|s| s.udp_addr == udp_addr && s.tcp_addr == tcp_addr)
+                                    {
+                                        let _ = socket.send_to(b"OK", from).await;
+                                        server.addr_identifier = Some(from);
+                                        println!("🫡 Received ID from {} — matched server {}, responded with OK", from, udp_addr);
+                                    } else {
+                                        println!(
+                                            "❌ Address pair {} {} not recognized",
+                                            parts[0], parts[1]
+                                        );
+                                    }
+                                }
+                                _ => {
+                                    println!(
+                                        "❌ Failed to parse heartbeat message: \"{}\"",
+                                        message
+                                    );
+                                }
+                            }
+                        } else {
+                            println!("❌ Malformed heartbeat message: \"{}\"", message);
+                        }
+                    }
+
+                    _ => {
+                        println!("⚠️ Unexpected message: \"{}\" from {}", message, from);
                     }
                 }
             }
@@ -212,35 +264,81 @@ impl ReverseProxyFl {
 impl ReverseProxyLd {
     pub async fn run(self: Arc<Self>) -> std::io::Result<()> {
         self.clone().check_availability().await;
-        let listener = TcpListener::bind(self.frontend_tcp_addr).await?;
-        println!("🔌 LD Listening on {}", self.frontend_tcp_addr);
 
-        loop {
-            let (mut client, addr) = listener.accept().await?;
-            let proxy = self.clone();
-            tokio::spawn(async move {
-                println!("ℹ️ LD Client {} connected", addr);
-                let mut buf = vec![0u8; 1024];
-                loop {
-                    match client.read(&mut buf).await {
-                        Ok(0) => return,
-                        Ok(n) => {
-                            if let Some(backend_addr) = proxy.get_available_backend().await {
-                                if let Ok(mut backend_stream) = TcpStream::connect(backend_addr) {
-                                    let _ = backend_stream.write_all(&buf[..n]);
-                                } else {
-                                    let _ =
-                                        client.write_all(b"Could not connect to backend\n").await;
+        let frontend_tcp_listener = TcpListener::bind(self.frontend_tcp_addr).await?;
+        let backend_tcp_listener = TcpListener::bind(self.backend_tcp_addr).await?;
+        println!("🔌 Frontend TCP listening on {}", self.frontend_tcp_addr);
+        println!("🔌 Backend TCP listening on {}", self.backend_tcp_addr);
+
+        let proxy = self.clone();
+        let frontend_task = tokio::spawn(async move {
+            loop {
+                let (frontend_socket, addr) = frontend_tcp_listener.accept().await.unwrap();
+                let proxy = proxy.clone();
+                tokio::spawn(async move {
+                    println!("📥 Frontend connection from {}", addr);
+                    if let Some(backend_addr) = proxy.get_available_backend().await {
+                        match TcpStream::connect(backend_addr).await {
+                            Ok(backend_socket) => {
+                                if let Err(e) =
+                                    proxy.forward_streams(frontend_socket, backend_socket).await
+                                {
+                                    eprintln!("❌ Frontend->Backend forwarding error: {}", e);
                                 }
-                            } else {
-                                let _ = client.write_all(b"No available backend\n").await;
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "❌ Failed to connect to backend {}: {}",
+                                    backend_addr, e
+                                );
                             }
                         }
-                        Err(_) => return,
+                    } else {
+                        eprintln!("⚠️ No available backend for frontend client {}", addr);
                     }
-                }
-            });
-        }
+                });
+            }
+        });
+
+        let proxy = self.clone();
+        let backend_task = tokio::spawn(async move {
+            loop {
+                let (backend_socket, addr) = backend_tcp_listener.accept().await.unwrap();
+                let proxy = proxy.clone();
+                tokio::spawn(async move {
+                    println!("📥 Backend connection from {}", addr);
+                    if let Some(frontend_addr) = proxy.get_available_frontend().await {
+                        match TcpStream::connect(frontend_addr).await {
+                            Ok(frontend_socket) => {
+                                if let Err(e) =
+                                    proxy.forward_streams(backend_socket, frontend_socket).await
+                                {
+                                    eprintln!("❌ Backend->Frontend forwarding error: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "❌ Failed to connect to frontend {}: {}",
+                                    frontend_addr, e
+                                );
+                            }
+                        }
+                    } else {
+                        eprintln!("⚠️ No available frontend for backend {}", addr);
+                    }
+                });
+            }
+        });
+
+        // Wait for both to run forever
+        let _ = tokio::try_join!(frontend_task, backend_task)?;
+
+        Ok(())
+    }
+
+    async fn forward_streams(&self, mut a: TcpStream, mut b: TcpStream) -> std::io::Result<()> {
+        let _ = tokio::io::copy_bidirectional(&mut a, &mut b).await?;
+        Ok(())
     }
 
     async fn check_availability(self: Arc<Self>) {
@@ -250,12 +348,12 @@ impl ReverseProxyLd {
         let frontend_udp = frontend_clone.frontend_heartbeat_udp_addr;
 
         tokio::spawn(async move {
-            Self::listen_for_heartbeats(backend_clone.backends.clone(), backend_udp, "backend")
+            Self::listen_for_heartbeats(backend_clone.backends.clone(), backend_udp, "Backend")
                 .await;
         });
 
         tokio::spawn(async move {
-            Self::listen_for_heartbeats(frontend_clone.frontends.clone(), frontend_udp, "frontend")
+            Self::listen_for_heartbeats(frontend_clone.frontends.clone(), frontend_udp, "Frontend")
                 .await;
         });
 
@@ -278,16 +376,63 @@ impl ReverseProxyLd {
         loop {
             if let Ok((n, from)) = socket.recv_from(&mut buf).await {
                 let msg = &buf[..n];
-                let message = String::from_utf8_lossy(msg);
-
+                let message = String::from_utf8_lossy(msg).trim().to_string();
                 let mut servers = servers.lock().await;
-                if let Some(server) = servers.iter_mut().find(|s| s.udp_addr == from) {
-                    if message == "OK" {
-                        server.last_heartbeat = Some(Instant::now());
-                        if !server.is_up {
-                            println!("✅ {} server {} is back online!", role, from);
+
+                match message.as_str() {
+                    "OK" => {
+                        if let Some(server) = servers
+                            .iter_mut()
+                            .filter(|s| s.addr_identifier.is_some())
+                            .find(|s| s.addr_identifier.unwrap() == from)
+                        {
+                            server.last_heartbeat = Some(Instant::now());
+                            if !server.is_up {
+                                println!("✅ {} {} is back online!", role, from);
+                            }
+                            server.is_up = true;
+                        } else {
+                            println!("❓ OK from unknown sender {}", from);
+                            let _ = socket.send_to(b"AUTH", from).await;
                         }
-                        server.is_up = true;
+                    }
+
+                    _ if message.contains(' ') => {
+                        let parts: Vec<&str> = message.split_whitespace().collect();
+                        if parts.len() == 2 {
+                            let parsed_udp = parts[0].parse::<SocketAddr>();
+                            let parsed_tcp = parts[1].parse::<SocketAddr>();
+
+                            match (parsed_udp, parsed_tcp) {
+                                (Ok(udp_addr), Ok(tcp_addr)) => {
+                                    if let Some(server) = servers
+                                        .iter_mut()
+                                        .find(|s| s.udp_addr == udp_addr && s.tcp_addr == tcp_addr)
+                                    {
+                                        let _ = socket.send_to(b"OK", from).await;
+                                        server.addr_identifier = Some(from);
+                                        println!("🫡 Received ID from {} — matched {} {}, responded with OK", from, role, udp_addr);
+                                    } else {
+                                        println!(
+                                            "❌ Address pair {} {} not recognized",
+                                            parts[0], parts[1]
+                                        );
+                                    }
+                                }
+                                _ => {
+                                    println!(
+                                        "❌ Failed to parse heartbeat message: \"{}\"",
+                                        message
+                                    );
+                                }
+                            }
+                        } else {
+                            println!("❌ Malformed heartbeat message: \"{}\"", message);
+                        }
+                    }
+
+                    _ => {
+                        println!("⚠️ Unexpected message: \"{}\" from {}", message, from);
                     }
                 }
             }

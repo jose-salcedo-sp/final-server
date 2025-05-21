@@ -7,7 +7,7 @@
 ## Integrantes del equipo
 - Demian Velasco Gómez Llanos (0253139@up.edu.mx)
 - Hector Emiliano Flores Castellano (0254398@up.edu.mx)
-- Diego Amin Hernández Pallares (0250146@up.edu.mx)
+- Diego Amin Hernandez Pallares (0250146@up.edu.mx)
 
 ## Hitos implementados
 

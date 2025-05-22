@@ -31,50 +31,70 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
 
     ACTIONS action = (ACTIONS)action_json->valueint;
 
-    switch (action) {
-        case PING:
-            log_info("Handling PING locally");
-            *handled_locally = true;
-            cJSON_Delete(json);
-            return strdup("{\"response\":\"pong\"}");
+	if(action == PING || action == VALIDATE_USER || action == CREATE_USER){
+		switch (action) {
+			case PING:
+				log_info("Handling PING locally");
+				*handled_locally = true;
+				cJSON_Delete(json);
+				return strdup("{\"response\":\"pong\"}");
 
-        case LOGIN:
-        case REGISTER:
-            log_info("Forwarding action %d to DB", action);
-            *handled_locally = false;
-            {
-                char *out = cJSON_PrintUnformatted(json);
-                cJSON_Delete(json);
-                return out;
-            }
+			case VALIDATE_USER:
+			case CREATE_USER:
+				log_info("Forwarding action %d to DB", action);
+				*handled_locally = false;
+				{
+					char *out = cJSON_PrintUnformatted(json);
+					cJSON_Delete(json);
+					return out;
+				}
+			default:{}
+		}
+	}
+	else{
+		//Necessary token validation
+		cJSON *token_json = cJSON_GetObjectItemCaseSensitive(json, "token");
+		if (!cJSON_IsString(token_json) || token_json->valuestring == NULL) {
+			log_warn("Missing or invalid token");
+			cJSON_Delete(json);
+			*handled_locally = true;
+			return strdup("{\"error\":\"unauthorized: token missing\"}");
+		}
 
-        default: {
-            // Requiere token
-            cJSON *token_json = cJSON_GetObjectItemCaseSensitive(json, "token");
-            if (!cJSON_IsString(token_json) || token_json->valuestring == NULL) {
-                log_warn("Missing or invalid token");
-                cJSON_Delete(json);
-                *handled_locally = true;
-                return strdup("{\"error\":\"unauthorized: token missing\"}");
-            }
+		int user_id;
+		if (!validate_token(token_json->valuestring, &user_id)) {
+			log_warn("Invalid or expired token");
+			cJSON_Delete(json);
+			*handled_locally = true;
+			return strdup("{\"error\":\"unauthorized: invalid token\"}");
+		}
 
-            int user_id;
-            if (!validate_token(token_json->valuestring, &user_id)) {
-                log_warn("Invalid or expired token");
-                cJSON_Delete(json);
-                *handled_locally = true;
-                return strdup("{\"error\":\"unauthorized: invalid token\"}");
-            }
+		log_info("Token validated. User ID: %d", user_id);
+		//cJSON_ReplaceItemInObject(json, "user_id", cJSON_CreateNumber(user_id));
+		switch (action) {
+			case GET_USER_INFO:
+			case CREATE_CHAT:
+			case ADD_TO_GROUP_CHAT:
+			case SEND_MESSAGE:
+			case GET_CHATS:
+			case GET_CHAT_MESSAGES:{
+					*handled_locally = false;
+					cJSON_DeleteItemFromObject(json, "token");
+					char *forward_json = cJSON_PrintUnformatted(json);
+					cJSON_Delete(json);
+					return forward_json;
+				}
+			default:{}
 
-            log_info("Token validated. User ID: %d", user_id);
-            cJSON_ReplaceItemInObject(json, "user_id", cJSON_CreateNumber(user_id));
+		}
 
-            *handled_locally = false;
-            char *forward_json = cJSON_PrintUnformatted(json);
-            cJSON_Delete(json);
-            return forward_json;
-        }
-    }
+		*handled_locally = false;
+		char *forward_json = cJSON_PrintUnformatted(json);
+		cJSON_Delete(json);
+		return forward_json;
+	}
+	*handled_locally = true;
+	return strdup("{\"error\":\"missing or invalid action\"}");
 }
 
 int connect_to_db(const char *host, const char *port) {
@@ -159,7 +179,7 @@ void handle_client(int client_sock) {
             if (json) {
                 cJSON *act = cJSON_GetObjectItem(json, "action");
                 cJSON *status = cJSON_GetObjectItem(json, "status");
-                if (act && act->valueint == LOGIN && status &&
+                if (act && act->valueint == CREATE_USER && status &&
                     strcmp(status->valuestring, "ok") == 0) {
 
                     int user_id = 42; // ⚠️ Simulado, idealmente viene del DB

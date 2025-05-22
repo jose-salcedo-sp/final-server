@@ -27,12 +27,16 @@
 typedef char UUID[UUIDv7_SIZE];
 
 typedef enum {
-  LOGIN = 0,
-  LOGOUT = 1,
-  REGISTER = 2,
-  MSGSEND = 3,
-  CHATJOIN = 5,
-  PING = 69,
+  	VALIDATE_USER = 0,
+  	LOGOUT = 1,
+  	CREATE_USER = 2, 
+  	GET_USER_INFO = 3, 
+  	CREATE_CHAT = 4, 
+	ADD_TO_GROUP_CHAT = 5, 
+	SEND_MESSAGE = 6, 
+	GET_CHATS = 7, 
+	GET_CHAT_MESSAGES = 8,
+  	PING = 69,
 } ACTIONS;
 
 typedef enum {

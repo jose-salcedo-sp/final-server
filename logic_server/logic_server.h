@@ -46,3 +46,6 @@ typedef struct {
 } UdpLoadBalancer;
 
 void udp_lb_daemon();
+
+bool validate_token(const char *jwt, int *out_user_id);
+char *create_token(int user_id);

@@ -42,14 +42,38 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
         case REGISTER:
             log_info("Forwarding action %d to DB", action);
             *handled_locally = false;
-            cJSON_Delete(json);
-            return strdup(raw_json);
+            {
+                char *out = cJSON_PrintUnformatted(json);
+                cJSON_Delete(json);
+                return out;
+            }
 
-        default:
-            log_warn("Unknown action: %d", action);
-            *handled_locally = true;
+        default: {
+            // Requiere token
+            cJSON *token_json = cJSON_GetObjectItemCaseSensitive(json, "token");
+            if (!cJSON_IsString(token_json) || token_json->valuestring == NULL) {
+                log_warn("Missing or invalid token");
+                cJSON_Delete(json);
+                *handled_locally = true;
+                return strdup("{\"error\":\"unauthorized: token missing\"}");
+            }
+
+            int user_id;
+            if (!validate_token(token_json->valuestring, &user_id)) {
+                log_warn("Invalid or expired token");
+                cJSON_Delete(json);
+                *handled_locally = true;
+                return strdup("{\"error\":\"unauthorized: invalid token\"}");
+            }
+
+            log_info("Token validated. User ID: %d", user_id);
+            cJSON_ReplaceItemInObject(json, "user_id", cJSON_CreateNumber(user_id));
+
+            *handled_locally = false;
+            char *forward_json = cJSON_PrintUnformatted(json);
             cJSON_Delete(json);
-            return strdup("{\"error\":\"unknown action\"}");
+            return forward_json;
+        }
     }
 }
 
@@ -116,11 +140,11 @@ void handle_client(int client_sock) {
         
             if (handled_locally) {
                 send(client_sock, response, strlen(response), 0);
+                free(response);
             } else {
                 write(db_sock, response, strlen(response));
+                free(response);
             }
-        
-            free(response);
         }
 
         if (fds[1].revents & POLLIN) {
@@ -130,6 +154,28 @@ void handle_client(int client_sock) {
 
             log_info("Received response from DB: %s", buffer);
 
+            // Si es LOGIN y fue exitoso, inyectamos token
+            cJSON *json = cJSON_Parse(buffer);
+            if (json) {
+                cJSON *act = cJSON_GetObjectItem(json, "action");
+                cJSON *status = cJSON_GetObjectItem(json, "status");
+                if (act && act->valueint == LOGIN && status &&
+                    strcmp(status->valuestring, "ok") == 0) {
+
+                    int user_id = 42; // ⚠️ Simulado, idealmente viene del DB
+                    char *jwt = create_token(user_id);
+                    cJSON_AddStringToObject(json, "token", jwt);
+                    free(jwt);
+
+                    char *modified = cJSON_PrintUnformatted(json);
+                    send(client_sock, modified, strlen(modified), 0);
+                    free(modified);
+                    cJSON_Delete(json);
+                    continue;
+                }
+                cJSON_Delete(json);
+            }
+
             send(client_sock, buffer, bytes_received, 0);
         }
     }
@@ -137,6 +183,17 @@ void handle_client(int client_sock) {
     close(client_sock);
     close(db_sock);
     exit(0);
+}
+
+// Stub de validación de token
+bool validate_token(const char *jwt, int *out_user_id) {
+    *out_user_id = 42;  // Simulado
+    return true;
+}
+
+// Stub de creación de token
+char *create_token(int user_id) {
+    return strdup("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...");
 }
 
 int main() {

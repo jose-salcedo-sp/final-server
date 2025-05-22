@@ -119,6 +119,15 @@ All requests are JSON objects with an `"action"` field.
 }
 ```
 
+**Response:**
+
+```json
+{
+    "response_code": 200,
+    "response_text": "Chat Group Chat was succesfully created with 4 users"
+}
+```
+
 ---
 
 ### Action `5` – Add to Group Chat
@@ -132,6 +141,15 @@ All requests are JSON objects with an `"action"` field.
     "added_by": 1,
     "participant_ids": [5, 6],
     "token": "..."
+}
+```
+
+**Response:**
+
+```json
+{
+    "response_code": 200,
+    "response_text": "Chat 1 has succesfully added 2 users"
 }
 ```
 
@@ -152,6 +170,15 @@ All requests are JSON objects with an `"action"` field.
 }
 ```
 
+**Response:**
+
+```json
+{
+    "response_code": 200,
+    "response_text": "Message from 1 was succesfully sent to chat 1"
+}
+```
+
 ---
 
 ### Action `7` – Get Chats
@@ -167,6 +194,25 @@ All requests are JSON objects with an `"action"` field.
 }
 ```
 
+**Response:**
+
+```json
+{
+    "response_code": 200,
+    "response_text": "2 chats succesfully retreived",
+    "chats_array": [
+        {
+            "chat_id": 1,
+            "chat_name": "Group Chat",
+            "last_message_content": "Hello everyone!",
+            "last_message_type": "text",
+            "last_message_timestamp": "2023-01-01 12:00:00",
+            "last_message_sender": "username"
+        }
+    ]
+}
+```
+
 ---
 
 ### Action `8` – Get Chat Messages
@@ -179,6 +225,25 @@ All requests are JSON objects with an `"action"` field.
     "chat_id": 1,
     "last_update_timestamp": "2023-01-01 00:00:00",
     "token": "..."
+}
+```
+
+**Response:**
+
+```json
+{
+    "response_code": 200,
+    "response_text": "5 messages succesfully retreived",
+    "messages_array": [
+        {
+            "message_id": 1,
+            "sender_id": 1,
+            "sender_username": "username",
+            "content": "Hello everyone!",
+            "message_type": "text",
+            "created_at": "2023-01-01 12:00:00"
+        }
+    ]
 }
 ```
 

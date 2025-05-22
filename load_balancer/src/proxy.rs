@@ -196,7 +196,7 @@ impl ReverseProxyFl {
                             let parsed_tcp = parts[1].parse::<SocketAddr>();
 
                             match (parsed_udp, parsed_tcp) {
-                                (Ok(udp_addr), Ok(tcp_addr)) => {
+                                (Ok(tcp_addr), Ok(udp_addr)) => {
                                     if let Some(server) = backends
                                         .iter_mut()
                                         .find(|s| s.udp_addr == udp_addr && s.tcp_addr == tcp_addr)
@@ -259,6 +259,7 @@ impl ReverseProxyFl {
             return None;
         }
         let index = self.next_index.fetch_add(1, Ordering::Relaxed) % available.len();
+        println!("available backend {:#?}", available[index]);
         Some(available[index].tcp_addr)
     }
 }
@@ -280,6 +281,7 @@ impl ReverseProxyLd {
                 tokio::spawn(async move {
                     println!("📥 Frontend connection from {}", addr);
                     if let Some(backend_addr) = proxy.get_available_backend().await {
+                        println!("Available backend at: {}", backend_addr);
                         match TcpStream::connect(backend_addr).await {
                             Ok(mut backend_stream) => {
                                 match tokio::io::copy_bidirectional(
@@ -318,6 +320,7 @@ impl ReverseProxyLd {
                 tokio::spawn(async move {
                     println!("📥 Backend connection from {}", addr);
                     if let Some(frontend_addr) = proxy.get_available_frontend().await {
+                        println!("Available frontend at: {}", frontend_addr);
                         match TcpStream::connect(frontend_addr).await {
                             Ok(mut frontend_stream) => {
                                 match tokio::io::copy_bidirectional(

@@ -3,11 +3,22 @@
 #include <mysql/mysql.h>
 #include <string.h>
 
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
 #include "../lib/cjson/cJSON.h"
 #include "user_manager.h"
 #include "chat_manager.h"
 
+#define BUFFER_SIZE 4096
+
 void reset_database(MYSQL *conn);
+
+void error(const char *msg) {
+    perror(msg);
+    exit(EXIT_FAILURE);
+}
 
 enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3, CREATE_CHAT = 4, ADD_TO_GROUP_CHAT = 5, SEND_MESSAGE = 6, GET_CHATS = 7, GET_CHAT_MESSAGES = 8};
 
@@ -353,15 +364,35 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 }
 
 int main() {
+	int tcp_port = 8080;
+	int opt = 1;
+
+	int server_fd, client_socket;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+
+	if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) error("socket failed");
+
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
+        perror("setsockopt");
+        exit(EXIT_FAILURE);
+    }
+
+	server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(tcp_port);
+
+    if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) error("bind failed");
+
+    if (listen(server_fd, 3) < 0) error("listen failed");
+
 	//char receive_buffer[4096] = "{ \"action\": 2, \"username\": \"ehinojosa\", \"email\": \"ehinojosa@example.com\", \"password\": \"sdahsdiuh\" }";
 	//char receive_buffer[4096] = "{ \"action\": 3, \"key\": \"exampleUser3\"}";
 	//char receive_buffer[4096] = "{\"action\": 4, \"is_group\": true, \"chat_name\": \"Group Chat 2\", \"created_by\": 12, \"participant_ids\": [4,6]}";
 	//char receive_buffer[4096] = "{\"action\": 5, \"chat_id\": 1, \"added_by\": 7, \"participant_ids\": [12]}";
 	//char receive_buffer[4096] = "{\"action\": 6, \"chat_id\":2, \"sender_id\": 12, \"content\": \"Hello Everyone! Welcome to the groupchat\", \"message_type\": \"user\"}";
 	//char receive_buffer[4096] = "{\"action\": 7, \"user_id\": 12, \"last_update_timestamp\": null}";
-	char receive_buffer[4096] = "{\"action\": 8, \"chat_id\": 2, \"last_update_timestamp\": null}";
-
-	char response_buffer[4096];
+	//char receive_buffer[4096] = "{\"action\": 8, \"chat_id\": 2, \"last_update_timestamp\": null}";
 
 
     MYSQL *conn;
@@ -377,19 +408,37 @@ int main() {
         fprintf(stderr, "Connection failed: %s\n", mysql_error(conn));
         exit(1);
     }
+	while (1){
+		if ((client_socket = accept(server_fd, (struct sockaddr *)&client_addr, &addr_len)) < 0) {
+            perror("accept");
+            continue;
+        }
 
+		printf("Client connected.\n");
 
-	cJSON *json = cJSON_Parse(receive_buffer);
+		char receive_buffer[BUFFER_SIZE];
+    	char response_buffer[BUFFER_SIZE];
 
+		memset(receive_buffer, 0, BUFFER_SIZE);
+        int valread = read(client_socket, receive_buffer, BUFFER_SIZE - 1);
 
-	printf("Flag\n");
+		if (valread < 1){
+			perror("valread");
+			continue;
+		}
 
-	handle_action(conn, json, response_buffer);
+		receive_buffer[valread] = '\0';
+        printf("Received query: %s\n", receive_buffer);
+		cJSON *json = cJSON_Parse(receive_buffer);
+
+		printf("Flag\n");
+
+		handle_action(conn, json, response_buffer);
 	
-	printf("\nResponse:\n%s\n",response_buffer);
+		printf("\nResponse:\n%s\n",response_buffer);
 
-
-
+		send(client_socket, response_buffer, strlen(response_buffer), 0);
+	}
 	//mysql_free_result(res);
     mysql_close(conn);
 

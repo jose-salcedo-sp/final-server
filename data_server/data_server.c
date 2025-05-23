@@ -20,7 +20,7 @@ void error(const char *msg) {
     exit(EXIT_FAILURE);
 }
 
-enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3, CREATE_CHAT = 4, ADD_TO_GROUP_CHAT = 5, SEND_MESSAGE = 6, GET_CHATS = 7, GET_CHAT_MESSAGES = 8, GET_CHAT_INFO = 9};
+enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3, CREATE_CHAT = 4, ADD_TO_GROUP_CHAT = 5, SEND_MESSAGE = 6, GET_CHATS = 7, GET_CHAT_MESSAGES = 8, GET_CHAT_INFO = 9, REMOVE_FROM_CHAT = 10};
 
 void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 	char response_text[1024];
@@ -378,6 +378,50 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
     		break;
 		}
 
+	case REMOVE_FROM_CHAT:{
+    	cJSON *chat_idItem = cJSON_GetObjectItemCaseSensitive(json, "chat_id");
+    	cJSON *removed_byItem = cJSON_GetObjectItemCaseSensitive(json, "removed_by");
+    	cJSON *participant_idsItem = cJSON_GetObjectItemCaseSensitive(json, "participant_ids");
+
+    	if (chat_idItem && removed_byItem && participant_idsItem && cJSON_IsArray(participant_idsItem)) {
+        	int chat_id = chat_idItem->valueint;
+        	int removed_by = removed_byItem->valueint;
+
+        	if (!is_user_admin(conn, chat_id, removed_by)) {
+            	strcpy(response_text, "Only admins can remove participants.");
+            	response_code = 403;
+            	break;
+        	}
+
+			if(is_group_chat(conn, chat_id) != 1){
+            	strcpy(response_text, "Only participants from group chats can be removed.");
+            	response_code = 403;
+				break;
+			}
+
+        	int removed_count = 0;
+        	int total_to_remove = cJSON_GetArraySize(participant_idsItem);
+
+        	for (int i = 0; i < total_to_remove; i++) {
+            	cJSON *idItem = cJSON_GetArrayItem(participant_idsItem, i);
+            	if (cJSON_IsNumber(idItem)) {
+                	int user_id = idItem->valueint;
+					if (user_id != removed_by){
+                		if (remove_from_chat(conn, chat_id, user_id) == 0) {
+                    		removed_count++;
+						}
+                	}
+            	}
+        	}
+
+        	sprintf(response_text, "Removed %d out of %d participants from chat %d", removed_count, total_to_remove, chat_id);
+        	response_code = 200;
+    	} else {
+        	strcpy(response_text, "Invalid parameters for REMOVE_FROM_CHAT");
+        	response_code = 400;
+    	}
+    	break;
+	}
 
 		default:
 			strcpy(response_text, "UNKNOWN COMMAND\n");

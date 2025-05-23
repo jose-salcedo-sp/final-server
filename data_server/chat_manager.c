@@ -230,3 +230,60 @@ int get_chat_info(MYSQL *conn, int chat_id, Chat *chat, User participants[], int
 
     return 0;
 }
+
+int is_user_admin(MYSQL *conn, int chat_id, int user_id) {
+    char query[256];
+    snprintf(query, sizeof(query),
+             "SELECT is_admin FROM chat_participants WHERE chat_id = %d AND user_id = %d",
+             chat_id, user_id);
+
+    if (mysql_query(conn, query)) return 0;
+
+    MYSQL_RES *res = mysql_store_result(conn);
+    MYSQL_ROW row = mysql_fetch_row(res);
+    int result = (row && atoi(row[0]) == 1) ? 1 : 0;
+
+    mysql_free_result(res);
+    return result;
+}
+
+int is_group_chat(MYSQL *conn, int chat_id) {
+    char query[256];
+    snprintf(query, sizeof(query), "SELECT is_group FROM chats WHERE chat_id = %d", chat_id);
+
+    if (mysql_query(conn, query)) {
+        fprintf(stderr, "MySQL query failed: %s\n", mysql_error(conn));
+        return -1;
+    }
+
+    MYSQL_RES *res = mysql_store_result(conn);
+    if (!res) {
+        fprintf(stderr, "mysql_store_result() failed\n");
+        return false;
+    }
+
+    MYSQL_ROW row = mysql_fetch_row(res);
+    bool result = false;
+    if (row && row[0]) {
+        result = atoi(row[0]) == 1;
+    }
+
+    mysql_free_result(res);
+    return result;
+}
+
+
+int remove_from_chat(MYSQL *conn, int chat_id, int user_id) {
+    char query[256];
+    snprintf(query, sizeof(query),
+             "DELETE FROM chat_participants WHERE chat_id = %d AND user_id = %d",
+             chat_id, user_id);
+
+    if (mysql_query(conn, query)) {
+        fprintf(stderr, "Remove query failed: %s\n", mysql_error(conn));
+        return -1;
+    }
+
+    return mysql_affected_rows(conn) > 0 ? 0 : -1;
+}
+

@@ -31,6 +31,12 @@ if __name__ == "__main__":
             "email": "user2@example.com",
             "password": "pass2"
         },
+                {
+            "action": 2,
+            "username": "user3",
+            "email": "user3@example.com",
+            "password": "pass3"
+        },
         {
             "action": 0,
             "key": "user1"
@@ -42,26 +48,43 @@ if __name__ == "__main__":
         {
             "action": 4,
             "is_group": False,
-            "chat_name": "Private Chat",
+            "chat_name": "DM Chat",
             "created_by": 1,
             "participant_ids": [2]
         },
+                {
+            "action": 4,
+            "is_group": True,
+            "chat_name": "Group Chat :)",
+            "created_by": 1,
+            "participant_ids": [2, 3]
+        },
         {
             "action": 6,
-            "chat_id": 1,
+            "chat_id": 2,
             "sender_id": 1,
             "content": "Hello again",
             "message_type": "text"
         },
         {
             "action": 8,
-            "chat_id": 1,
+            "chat_id": 2,
             "last_update_timestamp": None
+        },
+        {
+            "action": 9,
+            "chat_id": 2,
+        },
+        {
+            "action":10,
+            "chat_id": 2,
+            "removed_by":1,
+            "participant_ids":[1,2,3]
         },
                 {
             "action": 9,
-            "chat_id": 1,
-        }
+            "chat_id": 2,
+        },
     ]
 
     for request in test_cases:

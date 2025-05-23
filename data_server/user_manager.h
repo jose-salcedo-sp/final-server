@@ -18,6 +18,10 @@ typedef struct {
 int create_user(MYSQL *db_connection, User *newUser);
 int validate_user(MYSQL *db_connection, char *key, char *password_hash);
 int get_user_info(MYSQL *db_connection, char *key, User *user);
+int is_user_admin(MYSQL *conn, int chat_id, int user_id);
+int remove_from_chat(MYSQL *conn, int chat_id, int user_id);
+int is_group_chat(MYSQL *conn, int chat_id);
+int remove_from_chat(MYSQL *conn, int chat_id, int user_id);
 
 #endif
 

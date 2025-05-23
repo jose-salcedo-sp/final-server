@@ -1,4 +1,5 @@
 #include "chat_manager.h"
+#include "user_manager.h"
 #include <mysql/mysql.h>
 #include <mysql/mysql_com.h>
 #include <stdio.h>
@@ -42,7 +43,8 @@ int add_to_chat(MYSQL *conn, int chat_id, int user_id, int is_admin){
 }
 
 int send_message(MYSQL *conn, Message *message) {
-    char query[512];
+    char query[2048];
+
 
     // 1. Insert the new message
     snprintf(query, sizeof(query),
@@ -148,19 +150,83 @@ int get_chat_messages(MYSQL *conn, int chat_id, char *last_update_timestamp, Mes
         return -1;
     }
 
- 	while ((row = mysql_fetch_row(res)) != NULL) {
-    	Message *message = &messages[messages_count++];
+	while ((row = mysql_fetch_row(res)) != NULL) {
+    Message *message = &messages[messages_count++];
 
-    	message-> message_id = row[0] ? atoi(row[0]) : 0;
-    	message-> sender_id = row[1] ? atoi(row[1]) : 0;
+    message->message_id = row[0] ? atoi(row[0]) : 0;
+    message->sender_id = row[1] ? atoi(row[1]) : 0;
 
-    	message-> sender_username = row[2] ? row[2] : "";
+    strncpy(message->sender_username, row[2] ? row[2] : "", MAX_USERNAME_LENGTH - 1);
+    message->sender_username[MAX_USERNAME_LENGTH - 1] = '\0';
 
-    	message-> content = row[3] ? row[3] : "";
-    	message-> message_type = row[4] ? row[4] : "";
-    	message-> created_at = row[5] ? row[5] : "";	
-	}
+    strncpy(message->content, row[3] ? row[3] : "", MAX_CONTENT_LENGTH - 1);
+    message->content[MAX_CONTENT_LENGTH - 1] = '\0';
+
+    strncpy(message->message_type, row[4] ? row[4] : "", MAX_TYPE_LENGTH - 1);
+    message->message_type[MAX_TYPE_LENGTH - 1] = '\0';
+
+    strncpy(message->created_at, row[5] ? row[5] : "", MAX_TIMESTAMP_LENGTH - 1);
+    message->created_at[MAX_TIMESTAMP_LENGTH - 1] = '\0';
+}
 
     mysql_free_result(res);
+	printf("Query done\n");
     return messages_count;
+}
+
+int get_chat_info(MYSQL *conn, int chat_id, Chat *chat, User participants[], int *participant_count) {
+    MYSQL_RES *res;
+    MYSQL_ROW row;
+
+    // Obtener información del chat
+    char query[512];
+    snprintf(query, sizeof(query),
+             "SELECT chat_id, chat_name, is_group FROM chats WHERE chat_id = %d", chat_id);
+
+    if (mysql_query(conn, query)) {
+        fprintf(stderr, "Query failed: %s\n", mysql_error(conn));
+        return -1;
+    }
+
+    res = mysql_store_result(conn);
+    if ((row = mysql_fetch_row(res)) == NULL) {
+        mysql_free_result(res);
+        return -1; // Chat no encontrado
+    }
+
+    chat->id = atoi(row[0]);
+    chat->chat_name = strdup(row[1]);
+    chat->is_group = atoi(row[2]);
+
+    mysql_free_result(res);
+
+    // Obtener participantes del chat
+    snprintf(query, sizeof(query),
+             "SELECT u.user_id, u.username, u.email, u.password_hash, cp.is_admin "
+             "FROM chat_participants cp "
+             "JOIN users u ON cp.user_id = u.user_id "
+             "WHERE cp.chat_id = %d", chat_id);
+
+    if (mysql_query(conn, query)) {
+        fprintf(stderr, "Query failed: %s\n", mysql_error(conn));
+        return -1;
+    }
+
+    res = mysql_store_result(conn);
+    int count = 0;
+
+    while ((row = mysql_fetch_row(res)) != NULL && count < MAX_PARTICIPANTS) {
+        User *user = &participants[count];
+        user->id = atoi(row[0]);
+        user->username = strdup(row[1]);
+        user->email = strdup(row[2]);
+        user->hash_password = strdup(row[3]);
+        user->is_admin = atoi(row[4]);
+        count++;
+    }
+
+    *participant_count = count;
+    mysql_free_result(res);
+
+    return 0;
 }

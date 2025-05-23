@@ -12,6 +12,7 @@ typedef struct {
 	char* email;
 	char* hash_password;
 	int id;
+	int is_admin;
 } User;
 
 int create_user(MYSQL *db_connection, User *newUser);

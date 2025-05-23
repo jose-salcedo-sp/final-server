@@ -57,6 +57,10 @@ if __name__ == "__main__":
             "action": 8,
             "chat_id": 1,
             "last_update_timestamp": None
+        },
+                {
+            "action": 9,
+            "chat_id": 1,
         }
     ]
 

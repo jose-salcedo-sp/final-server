@@ -20,7 +20,7 @@ void error(const char *msg) {
     exit(EXIT_FAILURE);
 }
 
-enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3, CREATE_CHAT = 4, ADD_TO_GROUP_CHAT = 5, SEND_MESSAGE = 6, GET_CHATS = 7, GET_CHAT_MESSAGES = 8};
+enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3, CREATE_CHAT = 4, ADD_TO_GROUP_CHAT = 5, SEND_MESSAGE = 6, GET_CHATS = 7, GET_CHAT_MESSAGES = 8, GET_CHAT_INFO = 9};
 
 void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 	char response_text[1024];
@@ -116,15 +116,15 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 			if (is_groupItem && cJSON_IsBool(is_groupItem) && chat_nameItem && chat_nameItem -> valuestring && created_byItem && created_byItem -> valueint && participant_idsItem && cJSON_IsArray(participant_idsItem)){
 				int participant_count = cJSON_GetArraySize(participant_idsItem);
 				chat.is_group = is_groupItem -> valueint;
-
-				if (0 < participant_count && participant_count < MAX_PARTICIPANTS - (chat.is_group ? 1 : 9)){
+				printf("participants in new gc %d\n", MAX_PARTICIPANTS - (chat.is_group ? 1 : 8));
+				if (0 < participant_count && participant_count < MAX_PARTICIPANTS - (chat.is_group ? 1 : 8)){
 					chat.chat_name = chat_nameItem -> valuestring;
 					chat.created_by = created_byItem ->valueint;
 
 					if (create_chat(conn, &chat) == 0){
 						participants[0] = chat.created_by;
 
-						for (int i = 0; i < participant_count; i++) {
+						for (int i = 0; i < participant_count+1; i++) {
         					cJSON *id = cJSON_GetArrayItem(participant_idsItem, i);
         					if (cJSON_IsNumber(id)) {
             					participants[i+1] = id->valueint;
@@ -212,8 +212,11 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 			if (Item_sm_chat_id && Item_sm_chat_id -> valueint && Item_sm_sender_id && Item_sm_sender_id -> valueint && Item_sm_content && Item_sm_content -> valuestring && Item_sm_message_type && Item_sm_message_type -> valuestring){
 				message.chat_id = Item_sm_chat_id -> valueint;
 				message.sender_id = Item_sm_sender_id -> valueint;
-				message.content = Item_sm_content -> valuestring;
-				message.message_type = Item_sm_message_type -> valuestring;
+
+				strncpy(message.content, Item_sm_content->valuestring, MAX_CONTENT_LENGTH - 1);
+				message.content[MAX_CONTENT_LENGTH - 1] = '\0';
+				strncpy(message.message_type, Item_sm_message_type->valuestring, MAX_TYPE_LENGTH - 1);
+				message.message_type[MAX_TYPE_LENGTH - 1] = '\0';
 
 
 				if(send_message(conn, &message) == 0){
@@ -337,6 +340,43 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 			}
 			break;
 
+		case GET_CHAT_INFO:{
+    		cJSON *chat_id_item = cJSON_GetObjectItemCaseSensitive(json, "chat_id");
+
+	    if (chat_id_item && cJSON_IsNumber(chat_id_item)) {
+    	    int chat_id = chat_id_item->valueint;
+        	Chat chat;
+        	User participants[MAX_PARTICIPANTS];
+        	int participant_count;
+
+	        if (get_chat_info(conn, chat_id, &chat, participants, &participant_count) == 0) {
+    	        response_code = 200;
+        	    sprintf(response_text, "Chat info for ID %d retrieved successfully", chat_id);
+
+            	cJSON_AddNumberToObject(response_json, "chat_id", chat.id);
+            	cJSON_AddStringToObject(response_json, "chat_name", chat.chat_name);
+				cJSON_AddNumberToObject(response_json, "is_group", chat.is_group);
+
+            	cJSON *participants_array = cJSON_CreateArray();
+            	for (int i = 0; i < participant_count; i++) {
+                	cJSON *participant_json = cJSON_CreateObject();
+                	cJSON_AddNumberToObject(participant_json, "user_id", participants[i].id);
+                	cJSON_AddStringToObject(participant_json, "username", participants[i].username);
+                	cJSON_AddNumberToObject(participant_json, "is_admin", participants[i].is_admin);
+                	cJSON_AddItemToArray(participants_array, participant_json);
+            	}
+
+            	cJSON_AddItemToObject(response_json, "participants", participants_array);
+        	} else {
+            	response_code = 400;
+            	sprintf(response_text, "Could not retrieve info for chat ID %d", chat_id);
+        	}
+    	} else {
+        	response_code = 400;
+        	strcpy(response_text, "Invalid or missing chat_id");
+    	}
+    		break;
+		}
 
 
 		default:
@@ -408,6 +448,7 @@ int main() {
         fprintf(stderr, "Connection failed: %s\n", mysql_error(conn));
         exit(1);
     }
+
 	while (1){
 		if ((client_socket = accept(server_fd, (struct sockaddr *)&client_addr, &addr_len)) < 0) {
             perror("accept");
@@ -421,6 +462,8 @@ int main() {
 
 		memset(receive_buffer, 0, BUFFER_SIZE);
         int valread = read(client_socket, receive_buffer, BUFFER_SIZE - 1);
+
+		printf("received {%s}\n", receive_buffer);
 
 		if (valread < 1){
 			perror("valread");

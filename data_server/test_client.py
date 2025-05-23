@@ -75,13 +75,18 @@ if __name__ == "__main__":
             "action": 9,
             "chat_id": 2,
         },
+        #{
+         #   "action":10,
+          #  "chat_id": 2,
+           # "removed_by":1,
+            #"participant_ids":[1,2,3]
+        #},
         {
-            "action":10,
+            "action":11,
             "chat_id": 2,
-            "removed_by":1,
-            "participant_ids":[1,2,3]
+            "user_id":1,
         },
-                {
+        {
             "action": 9,
             "chat_id": 2,
         },

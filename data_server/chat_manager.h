@@ -40,3 +40,9 @@ int send_message(MYSQL *conn, Message *message);
 int get_chats(MYSQL *conn, int user_id, char *last_update_timestamp, Chat chats[MAX_CHATS]);
 int get_chat_messages(MYSQL *conn, int chat_id, char *last_update_timestamp, Message messages[MAX_MESSAGES]);
 int get_chat_info(MYSQL *conn, int chat_id, Chat *chat, User participants[], int *participant_count);
+
+int get_participant_count(MYSQL *conn, int chat_id);
+int get_admin_count(MYSQL *conn, int chat_id);
+int promote_random_participant_to_admin(MYSQL *conn, int chat_id);
+int delete_chat(MYSQL *conn, int chat_id);
+

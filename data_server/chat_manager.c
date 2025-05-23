@@ -287,3 +287,68 @@ int remove_from_chat(MYSQL *conn, int chat_id, int user_id) {
     return mysql_affected_rows(conn) > 0 ? 0 : -1;
 }
 
+int get_participant_count(MYSQL *conn, int chat_id) {
+    char query[128];
+    snprintf(query, sizeof(query), "SELECT COUNT(*) FROM chat_participants WHERE chat_id = %d", chat_id);
+
+    if (mysql_query(conn, query)) return -1;
+    MYSQL_RES *res = mysql_store_result(conn);
+    MYSQL_ROW row = mysql_fetch_row(res);
+    int count = row ? atoi(row[0]) : -1;
+    mysql_free_result(res);
+    return count;
+}
+
+int get_admin_count(MYSQL *conn, int chat_id) {
+    char query[128];
+    snprintf(query, sizeof(query), "SELECT COUNT(*) FROM chat_participants WHERE chat_id = %d AND is_admin = 1", chat_id);
+
+    if (mysql_query(conn, query)) return -1;
+    MYSQL_RES *res = mysql_store_result(conn);
+    MYSQL_ROW row = mysql_fetch_row(res);
+    int count = row ? atoi(row[0]) : -1;
+    mysql_free_result(res);
+    return count;
+}
+
+int promote_random_participant_to_admin(MYSQL *conn, int chat_id) {
+    char query_select[256];
+    snprintf(query_select, sizeof(query_select),
+             "SELECT user_id FROM chat_participants WHERE chat_id = %d LIMIT 1", chat_id);
+
+    if (mysql_query(conn, query_select)) {
+        fprintf(stderr, "Select for promote failed: %s\n", mysql_error(conn));
+        return -1;
+    }
+
+    MYSQL_RES *res = mysql_store_result(conn);
+    MYSQL_ROW row = mysql_fetch_row(res);
+
+    if (!row) {
+        mysql_free_result(res);
+        return -1;
+    }
+
+    int user_id = atoi(row[0]);
+    mysql_free_result(res);
+
+    char query_update[256];
+    snprintf(query_update, sizeof(query_update),
+             "UPDATE chat_participants SET is_admin = 1 WHERE chat_id = %d AND user_id = %d",
+             chat_id, user_id);
+
+    if (mysql_query(conn, query_update)) {
+        fprintf(stderr, "Update for promote failed: %s\n", mysql_error(conn));
+        return -1;
+    }
+
+    return 0;
+}
+
+int delete_chat(MYSQL *conn, int chat_id) {
+    char query[128];
+    snprintf(query, sizeof(query), "DELETE FROM chats WHERE chat_id = %d", chat_id);
+
+    return mysql_query(conn, query) == 0 ? 0 : -1;
+}
+

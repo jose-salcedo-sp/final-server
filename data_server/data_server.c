@@ -20,7 +20,7 @@ void error(const char *msg) {
     exit(EXIT_FAILURE);
 }
 
-enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3, CREATE_CHAT = 4, ADD_TO_GROUP_CHAT = 5, SEND_MESSAGE = 6, GET_CHATS = 7, GET_CHAT_MESSAGES = 8, GET_CHAT_INFO = 9, REMOVE_FROM_CHAT = 10};
+enum ACTIONS{VALIDATE_USER = 0, CREATE_USER = 2, GET_USER_INFO = 3, CREATE_CHAT = 4, ADD_TO_GROUP_CHAT = 5, SEND_MESSAGE = 6, GET_CHATS = 7, GET_CHAT_MESSAGES = 8, GET_CHAT_INFO = 9, REMOVE_FROM_CHAT = 10, EXIT_CHAT = 11};
 
 void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 	char response_text[1024];
@@ -418,6 +418,55 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
         	response_code = 200;
     	} else {
         	strcpy(response_text, "Invalid parameters for REMOVE_FROM_CHAT");
+        	response_code = 400;
+    	}
+    	break;
+	}
+
+	case EXIT_CHAT:{
+		cJSON *chat_idItem = cJSON_GetObjectItemCaseSensitive(json, "chat_id");
+		cJSON *user_idItem = cJSON_GetObjectItemCaseSensitive(json, "user_id");
+
+    	if (chat_idItem && user_idItem && cJSON_IsNumber(chat_idItem) && cJSON_IsNumber(user_idItem)) {
+        	int chat_id = chat_idItem->valueint;
+        	int user_id = user_idItem->valueint;
+
+        	int is_admin = is_user_admin(conn, chat_id, user_id);
+        	int participant_count = get_participant_count(conn, chat_id);
+
+        	if (remove_from_chat(conn, chat_id, user_id) != 0) {
+            	strcpy(response_text, "Failed to exit chat.");
+            	response_code = 400;
+            	break;
+        	}
+
+        	if (participant_count == 1) {
+            	if (delete_chat(conn, chat_id) == 0) {
+                	sprintf(response_text, "User %d left chat %d. Chat deleted as last participant.", user_id, chat_id);
+                	response_code = 200;
+            	} else {
+                	strcpy(response_text, "User left, but chat deletion failed.");
+                	response_code = 500;
+            	}
+            	break;
+        	}
+
+        	if (is_admin) {
+            	int admin_count = get_admin_count(conn, chat_id);
+            	if (admin_count == 0) {
+                	if (promote_random_participant_to_admin(conn, chat_id) != 0) {
+                    	strcpy(response_text, "User left, but failed to promote new admin.");
+                    	response_code = 500;
+                    	break;
+                	}
+            	}
+        	}
+
+        	sprintf(response_text, "User %d exited chat %d successfully", user_id, chat_id);
+        	response_code = 200;
+
+    	} else {
+        	strcpy(response_text, "Invalid parameters for EXIT_CHAT");
         	response_code = 400;
     	}
     	break;

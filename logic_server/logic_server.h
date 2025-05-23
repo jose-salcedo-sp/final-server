@@ -20,9 +20,23 @@
 
 #define BUFFER_SIZE 4096
 #define UUIDv7_SIZE 32
+#define IP "127.0.0.1"
 #define TCP_PORT 8080
 #define UDP_PORT 9090
 #define LB_COUNT 1
+
+#define STRINGIFY(x) #x
+#define MAKE_ADDR(ip, port) ip ":" STRINGIFY(port) 
+
+extern const char *db_ips[LB_COUNT];
+extern const char *client_ips[LB_COUNT];
+extern int db_ports_udp[LB_COUNT];
+extern int client_ports_udp[LB_COUNT];
+extern int db_ports_tcp[LB_COUNT];
+extern int client_ports_tcp[LB_COUNT];
+
+extern const char *string_tcp_addr;
+extern const char *string_udp_addr;
 
 typedef char UUID[UUIDv7_SIZE];
 

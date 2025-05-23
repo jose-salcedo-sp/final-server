@@ -6,24 +6,20 @@
 
 UdpLoadBalancer db_lbs[LB_COUNT];
 UdpLoadBalancer client_lbs[LB_COUNT];
-const char *TCP_ADDR = "127.0.0.1:8080";
-const char *UDP_ADDR = "127.0.0.1:9090";
 
 
 void init_udp_load_balancers() {
-    char *db_ips[LB_COUNT] = { "127.0.0.1"};
-	char *client_ips[LB_COUNT] = { "127.0.0.1"};
 
     for (int i = 0; i < LB_COUNT; i++) {
         memset(&db_lbs[i], 0, sizeof(UdpLoadBalancer));
         db_lbs[i].addr.sin_family = AF_INET;
-        db_lbs[i].addr.sin_port = htons(7070);
+        db_lbs[i].addr.sin_port = htons(db_ports_udp[i]);
         inet_pton(AF_INET, db_ips[i], &db_lbs[i].addr.sin_addr);
         db_lbs[i].state = SENDING_ADDRESS;
 
         memset(&client_lbs[i], 0, sizeof(UdpLoadBalancer));
         client_lbs[i].addr.sin_family = AF_INET;
-        client_lbs[i].addr.sin_port = htons(7071);
+        client_lbs[i].addr.sin_port = htons(client_ports_udp[i]);
         inet_pton(AF_INET, client_ips[i], &client_lbs[i].addr.sin_addr);
         client_lbs[i].state = SENDING_ADDRESS;
     }
@@ -62,7 +58,7 @@ void udp_lb_daemon() {
     while (1) {
         time_t now = time(NULL);
         if (now - last_sent >= MESSAGE_INTERVAL) {
-            snprintf(message, sizeof(message), "%s %s", TCP_ADDR, UDP_ADDR);
+            snprintf(message, sizeof(message), "%s %s", string_tcp_addr, string_udp_addr);
 
             for (int i = 0; i < LB_COUNT; i++) {
                 UdpLoadBalancer *lb[] = { &client_lbs[i], &db_lbs[i] };

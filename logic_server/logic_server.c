@@ -2,6 +2,15 @@
 int sd;
 int udp_sd;
 
+const char *db_ips[LB_COUNT] = { "127.0.0.1"};
+const char *client_ips[LB_COUNT] = { "127.0.0.1"};
+int db_ports_udp[LB_COUNT]= {7070};
+int client_ports_udp[LB_COUNT]= {7071};
+int db_ports_tcp[LB_COUNT]= {6060};
+int client_ports_tcp[LB_COUNT]= {6061};
+const char *string_tcp_addr = MAKE_ADDR(IP, TCP_PORT);
+const char *string_udp_addr = MAKE_ADDR(IP, UDP_PORT);
+
 void abort_handler(int sig) {
     printf("Shutting down server...\n");
     close(sd);

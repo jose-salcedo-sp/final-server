@@ -24,6 +24,7 @@
 #define TCP_PORT 8080
 #define UDP_PORT 9090
 #define LB_COUNT 1
+#define TIMEOUT 2
 
 #define STRINGIFY(x) #x
 #define MAKE_ADDR(ip, port) ip ":" STRINGIFY(port) 

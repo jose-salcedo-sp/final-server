@@ -6,8 +6,8 @@
 
 ## Integrantes del equipo
 
--   Demian Velasco Gómez Llanos (0253139@up.edu.mx)  
--   Hector Emiliano Flores Castellano (0254398@up.edu.mx)  
+-   Demian Velasco Gómez Llanos (0253139@up.edu.mx)
+-   Hector Emiliano Flores Castellano (0254398@up.edu.mx)
 -   Diego Amin Hernandez Pallares (0250146@up.edu.mx)
 
 ## Hitos implementados
@@ -32,9 +32,9 @@
 
 -   Se establece un socket TCP adicional hacia el backend en `127.0.0.1:6060` desde cada proceso hijo.
 -   El servidor lógico actúa como intermediario entre cliente y backend:
-    - Valida y preprocesa el JSON.
-    - Reenvía solicitudes directamente.
-    - Escucha respuestas del backend y las entrega al cliente.
+    -   Valida y preprocesa el JSON.
+    -   Reenvía solicitudes directamente.
+    -   Escucha respuestas del backend y las entrega al cliente.
 -   Se modifica la respuesta del backend solo en casos particulares, como al generar tokens JWT tras un `CREATE_USER` exitoso.
 
 ### 4. Daemon UDP (Load Balancing)
@@ -66,18 +66,17 @@
 
 ### 8. Pruebas de integración de red
 
-- Se probó satisfactoriamente la conexión entre el cliente y el servidor de datos de forma directa.
-- Se probó satisfactoriamente la conexión entre el cliente y el servidor de datos a través del Load Balancer
-- El servidor lógico pudo conectarse con el servidor de base de datos y retornar resultados al cliente
-- También se probó la conexión desde el cliente al servidor lógico **a través del balanceador UDP**
-- Se confirmaron respuestas correctas para `PING`, `CREATE_USER`, y `LOGIN`
-- Hubo algunas complicaciones al configurar IP's entre servidores y el load balancer pero al final se solucionó
+-   Se probó satisfactoriamente la conexión entre el cliente y el servidor de datos de forma directa.
+-   Se probó satisfactoriamente la conexión entre el cliente y el servidor de datos a través del Load Balancer
+-   El servidor lógico pudo conectarse con el servidor de base de datos y retornar resultados al cliente
+-   También se probó la conexión desde el cliente al servidor lógico **a través del balanceador UDP**
+-   Se confirmaron respuestas correctas para `PING`, `CREATE_USER`, y `LOGIN`
+-   Hubo algunas complicaciones al configurar IP's entre servidores y el load balancer pero al final se solucionó
 
 ## 📡 API Reference
 
 Todas las peticiones son objetos JSON que deben incluir un campo `"action"` con un valor numérico correspondiente a la operación deseada.  
 Dependiendo del tipo de acción, puede requerirse también el campo `"token"` para autenticación.
-
 
 ### Action `0` – Validate User
 
@@ -90,9 +89,11 @@ Dependiendo del tipo de acción, puede requerirse también el campo `"token"` pa
 **Response:**
 
 ```json
-{   "response_code": 200, 
-    "response_text": "...", 
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."  }
+{
+    "response_code": 200,
+    "response_text": "...",
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
 ```
 
 ---
@@ -113,9 +114,11 @@ Dependiendo del tipo de acción, puede requerirse también el campo `"token"` pa
 **Response:**
 
 ```json
-{   "response_code": 200,
+{
+    "response_code": 200,
     "response_text": "...",
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." }
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
 ```
 
 ---
@@ -125,7 +128,11 @@ Dependiendo del tipo de acción, puede requerirse también el campo `"token"` pa
 **Request:**
 
 ```json
-{ "action": 3, "key": "username_or_email", "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." }
+{
+    "action": 3,
+    "key": "username_or_email",
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
 ```
 
 **Response:**
@@ -336,6 +343,7 @@ Dependiendo del tipo de acción, puede requerirse también el campo `"token"` pa
     "code": 503
 }
 ```
+
 ### Action-Specific Errors
 
 **Response:**
@@ -347,6 +355,7 @@ Dependiendo del tipo de acción, puede requerirse también el campo `"token"` pa
     "message": "username already exists"
 }
 ```
+
 ### Chat Creation Failed
 
 **Response:**
@@ -409,12 +418,13 @@ typedef struct {
 
 All API responses include a `response_code` and `response_text`:
 
-| Code | Meaning           |
-| ---- | ----------------- |
-| 200  | Success           |
-| 202  | Success but empty |
-| 400  | Bad request       |
-| 404  | Unknown action    |
+| Code | Meaning                  |
+| ---- | ------------------------ |
+| 200  | Success                  |
+| 202  | Success but empty        |
+| 400  | Bad request              |
+| 404  | Unknown action           |
+| 503  | Service Unavailable (DB) |
 
 ---
 

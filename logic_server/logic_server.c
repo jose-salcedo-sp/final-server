@@ -106,40 +106,52 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
 	return strdup("{\"error\":\"missing or invalid action\"}");
 }
 
-int connect_to_db(const char *host, const char *port) {
+int connect_to_db_balancers(const char **hosts, const int *ports, int count) {
     struct addrinfo hints = {0}, *res, *rp;
+    char port_str[6];
     int sock;
 
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    if (getaddrinfo(host, port, &hints, &res) != 0) {
-        perror("getaddrinfo");
-        return -1;
+    for (int i = 0; i < count; i++) {
+        snprintf(port_str, sizeof(port_str), "%d", ports[i]);
+
+        if (getaddrinfo(hosts[i], port_str, &hints, &res) != 0) {
+            log_warn("getaddrinfo failed for %s:%s", hosts[i], port_str);
+            continue;
+        }
+
+        for (rp = res; rp != NULL; rp = rp->ai_next) {
+            sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+            if (sock == -1) continue;
+
+            if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) {
+                freeaddrinfo(res);
+                log_info("Connected to DB LB at %s:%s", hosts[i], port_str);
+                return sock;
+            }
+
+            close(sock);
+        }
+
+        freeaddrinfo(res);
+        log_warn("Failed to connect to DB LB at %s:%s", hosts[i], port_str);
     }
 
-    for (rp = res; rp != NULL; rp = rp->ai_next) {
-        sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (sock == -1) continue;
-
-        if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) break;
-
-        close(sock);
-    }
-
-    freeaddrinfo(res);
-    if (rp == NULL) return -1;
-
-    return sock;
+    log_err("All DB load balancers are unreachable");
+    return -1;
 }
 
 void handle_client(int client_sock) {
     char buffer[BUFFER_SIZE];
     int bytes_received;
 
-    int db_sock = connect_to_db("127.0.0.1", "6060");
+	int db_sock = connect_to_db_balancers(db_ips, db_ports_tcp, LB_COUNT);
     if (db_sock < 0) {
         log_err("Failed to connect to DB");
+		const char *error_json = "{ \"response_code\": 503, \"response_text\": \"Service unavailable: all DB load balancers are unreachable\" }";
+		send(client_sock, error_json, strlen(error_json), 0);
         close(client_sock);
         exit(1);
     }

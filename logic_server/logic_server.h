@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <time.h>
+#include <jwt.h>
 
 #define BUFFER_SIZE 4096
 #define UUIDv7_SIZE 32

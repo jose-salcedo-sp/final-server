@@ -10,6 +10,7 @@ int db_ports_tcp[LB_COUNT]= {6060};
 int client_ports_tcp[LB_COUNT]= {6061};
 const char *string_tcp_addr = MAKE_ADDR(IP, TCP_PORT);
 const char *string_udp_addr = MAKE_ADDR(IP, UDP_PORT);
+static const char *HMAC_SECRET = "mi_secreto_super_fuerte";
 
 void abort_handler(int sig) {
     printf("Shutting down server...\n");
@@ -79,7 +80,9 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
 		}
 
 		log_info("Token validated. User ID: %d", user_id);
-		//cJSON_ReplaceItemInObject(json, "user_id", cJSON_CreateNumber(user_id));
+		cJSON_ReplaceItemInObject(json, "user_id", cJSON_CreateNumber(user_id));
+        cJSON_DeleteItemFromObject(json, "token");
+
 		switch (action) {
 			case GET_USER_INFO:
 			case CREATE_CHAT:
@@ -227,15 +230,31 @@ void handle_client(int client_sock) {
 }
 
 // Stub de validación de token
-bool validate_token(const char *jwt, int *out_user_id) {
-    *out_user_id = 42;  // Simulado
-    return true;
+bool validate_token(const char *jwt_str, int *out_user_id) {
+  jwt_t *jwt = NULL;
+  if (jwt_decode(&jwt, jwt_str, (unsigned char*)HMAC_SECRET, strlen(HMAC_SECRET))) {
+    return false;    // firma inválida o expirado
+  }
+  // extraer claim user_id
+  *out_user_id = (int)jwt_get_grant_int(jwt, "user_id");
+  jwt_free(jwt);
+  return true;
 }
 
 // Stub de creación de token
 char *create_token(int user_id) {
-    return strdup("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...");
+  jwt_t *jwt = NULL;
+  jwt_new(&jwt);
+  jwt_add_grant_int(jwt, "user_id", user_id);
+  // expiración en 1 hora:
+  jwt_add_grant_int(jwt, "exp", time(NULL) + 3600);
+  // firma HMAC-SHA256:
+  jwt_set_alg(jwt, JWT_ALG_HS256, (unsigned char*)HMAC_SECRET, strlen(HMAC_SECRET));
+  char *token = jwt_encode_str(jwt);
+  jwt_free(jwt);
+  return token;
 }
+
 
 int main() {
     struct sockaddr_in sind, pin;

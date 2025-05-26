@@ -1,15 +1,15 @@
 {
     "mode": "ld",
-    "backend_tcp_addr": "0.0.0.0:3000",
-    "frontend_tcp_addr": "0.0.0.0:3001",
-    "backend_heartbeat_udp_addr": "0.0.0.0:5000",
-    "frontend_heartbeat_udp_addr": "0.0.0.0:5001",
-    "backend_addrs": [
-        "0.0.0.0:7000 0.0.0.0:7001",
-        "10.7.30.161:5000 10.7.30.161:5001"
-    ],
-    "frontend_addrs": [
+    "logic_servers_tcp_listening_addr": "0.0.0.0:3001",
+    "logic_servers_heartbeat_udp_addr": "0.0.0.0:5001",
+    "logic_servers": [
         "10.7.30.153:7000 10.7.30.153:7001",
         "0.0.0.0:7002 0.0.0.0:7003"
+    ],
+    "data_servers_tcp_listening_addr": "0.0.0.0:3000",
+    "data_servers_hearbeat_udp_addr": "0.0.0.0:5000",
+    "data_servers": [
+        "0.0.0.0:7000 0.0.0.0:7001",
+        "10.7.30.161:5000 10.7.30.161:5001"
     ]
 }

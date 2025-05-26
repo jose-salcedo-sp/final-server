@@ -26,20 +26,20 @@ pub enum ReverseProxy {
 }
 
 pub struct ReverseProxyFl {
-    pub frontend_tcp_addr: SocketAddr,
-    pub backend_heartbeat_udp_addr: SocketAddr,
-    pub backends: Mutex<Vec<Server>>,
-    pub next_index: AtomicUsize,
+    client_tcp_listening_addr: SocketAddr,
+    logic_heartbeat_udp_addr: SocketAddr,
+    logic_servers: Mutex<Vec<Server>>,
+    next_index: AtomicUsize,
 }
 
 pub struct ReverseProxyLd {
-    pub frontend_tcp_addr: SocketAddr,
-    pub backend_tcp_addr: SocketAddr,
-    pub backend_heartbeat_udp_addr: SocketAddr,
-    pub frontend_heartbeat_udp_addr: SocketAddr,
-    pub backends: Arc<Mutex<Vec<Server>>>,
-    pub frontends: Arc<Mutex<Vec<Server>>>,
-    pub next_index: AtomicUsize,
+    logic_servers_tcp_listening_addr: SocketAddr,
+    logic_servers_heartbeat_udp_addr: SocketAddr,
+    logic_servers: Arc<Mutex<Vec<Server>>>,
+    data_servers_tcp_listening_addr: SocketAddr,
+    data_servers_hearbeat_udp_addr: SocketAddr,
+    data_servers: Arc<Mutex<Vec<Server>>>,
+    next_index: AtomicUsize,
 }
 
 impl ReverseProxy {
@@ -49,44 +49,44 @@ impl ReverseProxy {
 
         match config {
             Config::Fl {
-                backend_heartbeat_udp_addr,
-                frontend_tcp_addr,
-                backend_addrs,
+                client_tcp_listening_addr,
+                logic_heartbeat_udp_addr,
+                logic_servers,
             } => {
-                let backend_servers = Self::parse_addr_pairs(&backend_addrs);
-                Arc::new(Self::Fl(Arc::new(ReverseProxyFl {
-                    frontend_tcp_addr,
-                    backend_heartbeat_udp_addr,
-                    backends: Mutex::new(backend_servers),
+                let backend_servers = Self::parse_addr_pairs(&logic_servers);
+                return Arc::new(Self::Fl(Arc::new(ReverseProxyFl {
+                    client_tcp_listening_addr,
+                    logic_heartbeat_udp_addr,
+                    logic_servers: Mutex::new(backend_servers),
                     next_index: AtomicUsize::new(0),
-                })))
+                })));
             }
 
             Config::Ld {
-                backend_tcp_addr,
-                backend_heartbeat_udp_addr,
-                frontend_tcp_addr,
-                frontend_heartbeat_udp_addr,
-                backend_addrs,
-                frontend_addrs,
+                data_servers_tcp_listening_addr,
+                data_servers_hearbeat_udp_addr,
+                logic_servers_tcp_listening_addr,
+                logic_servers_heartbeat_udp_addr,
+                data_servers,
+                logic_servers,
             } => {
-                let backend_servers = Self::parse_addr_pairs(&backend_addrs);
-                let frontend_servers = Self::parse_addr_pairs(&frontend_addrs);
-                Arc::new(Self::Ld(Arc::new(ReverseProxyLd {
-                    frontend_tcp_addr,
-                    backend_tcp_addr,
-                    backend_heartbeat_udp_addr,
-                    frontend_heartbeat_udp_addr,
-                    backends: Arc::new(Mutex::new(backend_servers)),
-                    frontends: Arc::new(Mutex::new(frontend_servers)),
+                let backend_servers = Self::parse_addr_pairs(&data_servers);
+                let frontend_servers = Self::parse_addr_pairs(&logic_servers);
+                return Arc::new(Self::Ld(Arc::new(ReverseProxyLd {
+                    logic_servers_tcp_listening_addr,
+                    data_servers_tcp_listening_addr,
+                    data_servers_hearbeat_udp_addr,
+                    logic_servers_heartbeat_udp_addr,
+                    data_servers: Arc::new(Mutex::new(backend_servers)),
+                    logic_servers: Arc::new(Mutex::new(frontend_servers)),
                     next_index: AtomicUsize::new(0),
-                })))
+                })));
             }
         }
     }
 
     fn parse_addr_pairs(raw: &[String]) -> Vec<Server> {
-        raw.iter()
+        return raw.iter()
             .filter_map(|line| {
                 let mut parts = line.split_whitespace();
                 let tcp = parts.next()?.parse().ok()?;
@@ -99,15 +99,15 @@ impl ReverseProxy {
                     is_up: false,
                 })
             })
-            .collect()
+            .collect();
     }
 }
 
 impl ReverseProxyFl {
     pub async fn run(self: Arc<Self>) -> std::io::Result<()> {
         self.clone().check_backends_availability().await;
-        let listener = TcpListener::bind(self.frontend_tcp_addr).await?;
-        println!("🔌 FL Listening on {}", self.frontend_tcp_addr);
+        let listener = TcpListener::bind(self.client_tcp_listening_addr).await?;
+        println!("🔌 FL Listening on {}", self.client_tcp_listening_addr);
 
         loop {
             let (mut client, addr) = listener.accept().await?;
@@ -148,7 +148,7 @@ impl ReverseProxyFl {
 
     async fn check_backends_availability(self: Arc<Self>) {
         let self_clone = self.clone();
-        let udp_heartbeat_addr = self_clone.backend_heartbeat_udp_addr;
+        let udp_heartbeat_addr = self_clone.logic_heartbeat_udp_addr;
         tokio::spawn(async move {
             Self::listen_for_heartbeats(self_clone, udp_heartbeat_addr).await;
         });
@@ -169,7 +169,7 @@ impl ReverseProxyFl {
             if let Ok((n, from)) = socket.recv_from(&mut buf).await {
                 let msg = &buf[..n];
                 let message = String::from_utf8_lossy(msg).trim().to_string();
-                let mut backends = self_.backends.lock().await;
+                let mut backends = self_.logic_servers.lock().await;
 
                 match message.as_str() {
                     "OK" => {
@@ -192,8 +192,8 @@ impl ReverseProxyFl {
                     _ if message.contains(' ') => {
                         let parts: Vec<&str> = message.split_whitespace().collect();
                         if parts.len() == 2 {
-                            let parsed_udp = parts[0].parse::<SocketAddr>();
-                            let parsed_tcp = parts[1].parse::<SocketAddr>();
+                            let parsed_tcp = parts[0].parse::<SocketAddr>();
+                            let parsed_udp = parts[1].parse::<SocketAddr>();
 
                             match (parsed_udp, parsed_tcp) {
                                 (Ok(tcp_addr), Ok(udp_addr)) => {
@@ -234,7 +234,7 @@ impl ReverseProxyFl {
     async fn check_heartbeat_expiry(self_: Arc<Self>) {
         loop {
             {
-                let mut backends = self_.backends.lock().await;
+                let mut backends = self_.logic_servers.lock().await;
                 for backend in backends.iter_mut() {
                     if let Some(last) = backend.last_heartbeat {
                         if last.elapsed() > Duration::from_secs(1) {
@@ -253,7 +253,7 @@ impl ReverseProxyFl {
     }
 
     async fn get_available_backend(&self) -> Option<SocketAddr> {
-        let backends = self.backends.lock().await;
+        let backends = self.logic_servers.lock().await;
         let available: Vec<_> = backends.iter().filter(|s| s.is_up).collect();
         if available.is_empty() {
             return None;
@@ -268,10 +268,17 @@ impl ReverseProxyLd {
     pub async fn run(self: Arc<Self>) -> std::io::Result<()> {
         self.clone().check_availability().await;
 
-        let frontend_tcp_listener = TcpListener::bind(self.frontend_tcp_addr).await?;
-        let backend_tcp_listener = TcpListener::bind(self.backend_tcp_addr).await?;
-        println!("🔌 Frontend TCP listening on {}", self.frontend_tcp_addr);
-        println!("🔌 Backend TCP listening on {}", self.backend_tcp_addr);
+        let frontend_tcp_listener =
+            TcpListener::bind(self.logic_servers_tcp_listening_addr).await?;
+        let backend_tcp_listener = TcpListener::bind(self.data_servers_tcp_listening_addr).await?;
+        println!(
+            "🔌 Frontend TCP listening on {}",
+            self.logic_servers_tcp_listening_addr
+        );
+        println!(
+            "🔌 Backend TCP listening on {}",
+            self.data_servers_tcp_listening_addr
+        );
 
         let proxy = self.clone();
         let frontend_task = tokio::spawn(async move {
@@ -360,17 +367,21 @@ impl ReverseProxyLd {
     async fn check_availability(self: Arc<Self>) {
         let backend_clone = self.clone();
         let frontend_clone = self.clone();
-        let backend_udp = backend_clone.backend_heartbeat_udp_addr;
-        let frontend_udp = frontend_clone.frontend_heartbeat_udp_addr;
+        let backend_udp = backend_clone.data_servers_hearbeat_udp_addr;
+        let frontend_udp = frontend_clone.logic_servers_heartbeat_udp_addr;
 
         tokio::spawn(async move {
-            Self::listen_for_heartbeats(backend_clone.backends.clone(), backend_udp, "Backend")
+            Self::listen_for_heartbeats(backend_clone.data_servers.clone(), backend_udp, "Backend")
                 .await;
         });
 
         tokio::spawn(async move {
-            Self::listen_for_heartbeats(frontend_clone.frontends.clone(), frontend_udp, "Frontend")
-                .await;
+            Self::listen_for_heartbeats(
+                frontend_clone.logic_servers.clone(),
+                frontend_udp,
+                "Frontend",
+            )
+            .await;
         });
 
         let expiry_clone = self.clone();
@@ -458,7 +469,7 @@ impl ReverseProxyLd {
     async fn check_heartbeat_expiry(self_: Arc<Self>) {
         loop {
             {
-                let mut backends = self_.backends.lock().await;
+                let mut backends = self_.data_servers.lock().await;
                 for server in backends.iter_mut() {
                     if let Some(last) = server.last_heartbeat {
                         if last.elapsed() > Duration::from_secs(1) {
@@ -472,7 +483,7 @@ impl ReverseProxyLd {
                     }
                 }
 
-                let mut frontends = self_.frontends.lock().await;
+                let mut frontends = self_.logic_servers.lock().await;
                 for server in frontends.iter_mut() {
                     if let Some(last) = server.last_heartbeat {
                         if last.elapsed() > Duration::from_secs(1) {
@@ -491,7 +502,7 @@ impl ReverseProxyLd {
     }
 
     async fn get_available_backend(&self) -> Option<SocketAddr> {
-        let backends = self.backends.lock().await;
+        let backends = self.data_servers.lock().await;
         let available: Vec<_> = backends.iter().filter(|s| s.is_up).collect();
         if available.is_empty() {
             return None;
@@ -501,7 +512,7 @@ impl ReverseProxyLd {
     }
 
     async fn get_available_frontend(&self) -> Option<SocketAddr> {
-        let frontends = self.frontends.lock().await;
+        let frontends = self.logic_servers.lock().await;
         let available: Vec<_> = frontends.iter().filter(|s| s.is_up).collect();
         if available.is_empty() {
             return None;

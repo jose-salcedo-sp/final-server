@@ -5,16 +5,16 @@ use std::net::SocketAddr;
 #[serde(tag = "mode", rename_all = "lowercase")] // deserialize on "mode": "fl"/"ld"
 pub enum Config {
     Fl {
-        backend_heartbeat_udp_addr: SocketAddr,
-        frontend_tcp_addr: SocketAddr,
-        backend_addrs: Vec<String>,
+        client_tcp_listening_addr: SocketAddr,
+        logic_heartbeat_udp_addr: SocketAddr,
+        logic_servers: Vec<String>,
     },
     Ld {
-        backend_tcp_addr: SocketAddr,
-        backend_heartbeat_udp_addr: SocketAddr,
-        frontend_tcp_addr: SocketAddr,
-        frontend_heartbeat_udp_addr: SocketAddr,
-        backend_addrs: Vec<String>,
-        frontend_addrs: Vec<String>,
+        logic_servers_tcp_listening_addr: SocketAddr,
+        logic_servers_heartbeat_udp_addr: SocketAddr,
+        logic_servers: Vec<String>,
+        data_servers_tcp_listening_addr: SocketAddr,
+        data_servers_hearbeat_udp_addr: SocketAddr,
+        data_servers: Vec<String>,
     },
 }

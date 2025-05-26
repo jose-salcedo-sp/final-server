@@ -12,9 +12,9 @@
 ```json
 {
     "mode": "fl", // frontend to logic reverse proxy
-    "frontend_tcp_addr": "0.0.0.0:3001", // tcp addr to which the frontend can connect to
-    "backend_heartbeat_udp_addr": "0.0.0.0:5000", // udp addr to which your logic server will be sending status updates
-    "backend_addrs": [
+    "client_tcp_listening_addr": "0.0.0.0:3001", // tcp addr to which the frontend can connect to
+    "logic_heartbeat_udp_addr": "0.0.0.0:5000", // udp addr to which your logic server will be sending status updates
+    "logic_servers": [
         // <udp> <tcp> listening addrs for each of the logical servers
         "0.0.0.0:7000 0.0.0.0:7001",
         "0.0.0.0:7002 0.0.0.0:7003"
@@ -61,8 +61,8 @@ Proxy terminal:
 ```
 ℹ️ Running FE <-> LOGIC load balancer
 🔌 FL Listening on 0.0.0.0:3001
-🫡 Received ID from 127.0.0.1:7001 — matched server 0.0.0.0:7001, responded with OK
-✅ Server 127.0.0.1:7001 is back online!
+🫡 Received ID from 127.0.0.1:7001 — matched logic server 0.0.0.0:7001, responded with OK
+✅ Logic Server 127.0.0.1:7001 is back online!
 ℹ️ FL Client 127.0.0.1:50811 connected
 🔁 Forwarding traffic between client and backend 0.0.0.0:7000
 📊 Connection closed: client→backend=20B, backend→client=20B
@@ -91,12 +91,16 @@ And your connection from the client should be terminated.
 ```json
 {
     "mode": "ld",
-    "backend_tcp_addr": "0.0.0.0:3000",
-    "frontend_tcp_addr": "0.0.0.0:3001",
-    "backend_heartbeat_udp_addr": "0.0.0.0:5000",
-    "frontend_heartbeat_udp_addr": "0.0.0.0:5001",
-    "backend_addrs": ["0.0.0.0:7000 0.0.0.0:7001"],
-    "frontend_addrs": ["0.0.0.0:7002 0.0.0.0:7003"]
+    "logic_servers_tcp_listening_addr": "0.0.0.0:3001",
+    "logic_servers_heartbeat_udp_addr": "0.0.0.0:5001",
+    "data_servers_tcp_listening_addr": "0.0.0.0:3000",
+    "data_servers_hearbeat_udp_addr": "0.0.0.0:5000",
+    "logic_servers": [
+        "0.0.0.0:7002 0.0.0.0:7003"
+    ],
+    "data_servers": [
+        "0.0.0.0:7000 0.0.0.0:7001"
+    ]
 }
 ```
 
@@ -111,8 +115,8 @@ And your connection from the client should be terminated.
 
 ```
 ℹ️ Running LOGIC <-> DATA load balancer
-🔌 Frontend TCP listening on 0.0.0.0:3001
-🔌 Backend TCP listening on 0.0.0.0:3000
+🔌 Logic TCP listening on 0.0.0.0:3001
+🔌 Data TCP listening on 0.0.0.0:3000
 ```
 
 ### TEST USAGE
@@ -143,12 +147,12 @@ You should see this on your load balancer terminal:
 
 ```
 ℹ️ Running LOGIC <-> DATA load balancer
-🔌 Frontend TCP listening on 0.0.0.0:3001
-🔌 Backend TCP listening on 0.0.0.0:3000
-🫡 Received ID from 127.0.0.1:7003 — matched Frontend 0.0.0.0:7003, responded with OK
-✅ Frontend 127.0.0.1:7003 is back online!
-🫡 Received ID from 127.0.0.1:7001 — matched Backend 0.0.0.0:7001, responded with OK
-✅ Backend 127.0.0.1:7001 is back online!
+🔌 Logic TCP listening on 0.0.0.0:3001
+🔌 Data TCP listening on 0.0.0.0:3000
+🫡 Received ID from 127.0.0.1:7003 — matched Logic Server 0.0.0.0:7003, responded with OK
+✅ Logic Server 127.0.0.1:7003 is back online!
+🫡 Received ID from 127.0.0.1:7001 — matched Data Server 0.0.0.0:7001, responded with OK
+✅ Data Server 127.0.0.1:7001 is back online!
 ```
 
 Now you should be able to send messages between both servers through the proxy in a full duplex non-blocking communication through the terminal.

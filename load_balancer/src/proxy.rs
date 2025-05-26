@@ -123,7 +123,9 @@ impl ReverseProxyFl {
                                 backend_addr
                             );
 
-                            match tokio::io::copy_bidirectional(&mut client, &mut backend_stream).await {
+                            match tokio::io::copy_bidirectional(&mut client, &mut backend_stream)
+                                .await
+                            {
                                 Ok((c2b, b2c)) => {
                                     println!("📊 Connection closed: client→backend={}B, backend→client={}B", c2b, b2c);
                                 }
@@ -194,7 +196,7 @@ impl ReverseProxyFl {
                             let parsed_tcp = parts[1].parse::<SocketAddr>();
 
                             match (parsed_udp, parsed_tcp) {
-                                (Ok(udp_addr), Ok(tcp_addr)) => {
+                                (Ok(tcp_addr), Ok(udp_addr)) => {
                                     if let Some(server) = backends
                                         .iter_mut()
                                         .find(|s| s.udp_addr == udp_addr && s.tcp_addr == tcp_addr)
@@ -257,6 +259,7 @@ impl ReverseProxyFl {
             return None;
         }
         let index = self.next_index.fetch_add(1, Ordering::Relaxed) % available.len();
+        println!("available backend {:#?}", available[index]);
         Some(available[index].tcp_addr)
     }
 }
@@ -273,17 +276,26 @@ impl ReverseProxyLd {
         let proxy = self.clone();
         let frontend_task = tokio::spawn(async move {
             loop {
-                let (frontend_socket, addr) = frontend_tcp_listener.accept().await.unwrap();
+                let (mut frontend_stream, addr) = frontend_tcp_listener.accept().await.unwrap();
                 let proxy = proxy.clone();
                 tokio::spawn(async move {
                     println!("📥 Frontend connection from {}", addr);
                     if let Some(backend_addr) = proxy.get_available_backend().await {
+                        println!("Available backend at: {}", backend_addr);
                         match TcpStream::connect(backend_addr).await {
-                            Ok(backend_socket) => {
-                                if let Err(e) =
-                                    proxy.forward_streams(frontend_socket, backend_socket).await
+                            Ok(mut backend_stream) => {
+                                match tokio::io::copy_bidirectional(
+                                    &mut backend_stream,
+                                    &mut frontend_stream,
+                                )
+                                .await
                                 {
-                                    eprintln!("❌ Frontend->Backend forwarding error: {}", e);
+                                    Ok((c2b, b2c)) => {
+                                        println!("📊 Connection closed: client→backend={}B, backend→client={}B", c2b, b2c);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("❌ Copy error: {}", e);
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -303,17 +315,26 @@ impl ReverseProxyLd {
         let proxy = self.clone();
         let backend_task = tokio::spawn(async move {
             loop {
-                let (backend_socket, addr) = backend_tcp_listener.accept().await.unwrap();
+                let (mut backend_stream, addr) = backend_tcp_listener.accept().await.unwrap();
                 let proxy = proxy.clone();
                 tokio::spawn(async move {
                     println!("📥 Backend connection from {}", addr);
                     if let Some(frontend_addr) = proxy.get_available_frontend().await {
+                        println!("Available frontend at: {}", frontend_addr);
                         match TcpStream::connect(frontend_addr).await {
-                            Ok(frontend_socket) => {
-                                if let Err(e) =
-                                    proxy.forward_streams(backend_socket, frontend_socket).await
+                            Ok(mut frontend_stream) => {
+                                match tokio::io::copy_bidirectional(
+                                    &mut backend_stream,
+                                    &mut frontend_stream,
+                                )
+                                .await
                                 {
-                                    eprintln!("❌ Backend->Frontend forwarding error: {}", e);
+                                    Ok((c2b, b2c)) => {
+                                        println!("📊 Connection closed: client→backend={}B, backend→client={}B", c2b, b2c);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("❌ Copy error: {}", e);
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -333,11 +354,6 @@ impl ReverseProxyLd {
         // Wait for both to run forever
         let _ = tokio::try_join!(frontend_task, backend_task)?;
 
-        Ok(())
-    }
-
-    async fn forward_streams(&self, mut a: TcpStream, mut b: TcpStream) -> std::io::Result<()> {
-        let _ = tokio::io::copy_bidirectional(&mut a, &mut b).await?;
         Ok(())
     }
 

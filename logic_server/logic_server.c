@@ -12,6 +12,27 @@ const char *string_tcp_addr = MAKE_ADDR(IP, TCP_PORT);
 const char *string_udp_addr = MAKE_ADDR(IP, UDP_PORT);
 static const char *HMAC_SECRET = "mi_secreto_super_fuerte";
 
+const ErrorResponse ERROR_INVALID_JSON = {400, "Invalid JSON"};
+const ErrorResponse ERROR_MISSING_ACTION = {400, "Missing or invalid action"};
+const ErrorResponse ERROR_MISSING_FIELDS = {400, "Missing required fields for this action"};
+const ErrorResponse ERROR_MISSING_TOKEN = {401, "Unauthorized: token missing"};
+const ErrorResponse ERROR_INVALID_TOKEN = {401, "Unauthorized: invalid token"};
+const ErrorResponse ERROR_UNKNOWN_ACTION = {404, "Unknown action"};
+const ErrorResponse ERROR_DB_UNAVAILABLE = {503, "Service unavailable: all DB load balancers are unreachable"};
+
+const ActionValidation validation_rules[] = {
+    {VALIDATE_USER, {"key", "password", NULL}},
+    {CREATE_USER, {"username", "email", "password", NULL}},
+    {GET_USER_INFO, {"key", NULL}},
+    {CREATE_CHAT, {"is_group", "chat_name", "created_by", "participant_ids", NULL}},
+    {ADD_TO_GROUP_CHAT, {"chat_id", "added_by", "participant_ids", NULL}},
+    {SEND_MESSAGE, {"chat_id", "sender_id", "content", "message_type", NULL}},
+    {GET_CHATS, {"user_id", "last_update_timestamp", NULL}},
+    {GET_CHAT_MESSAGES, {"chat_id", "last_update_timestamp", NULL}},
+    {PING, {NULL}}
+};
+
+
 void abort_handler(int sig) {
     printf("Shutting down server...\n");
     close(sd);
@@ -23,12 +44,43 @@ void sigchld_handler(int sig) {
     while(waitpid(-1, NULL, WNOHANG) > 0);
 }
 
+char* create_error_response(ErrorResponse error) {
+    cJSON *json = cJSON_CreateObject();
+    cJSON_AddNumberToObject(json, "response_code", error.code);
+    cJSON_AddStringToObject(json, "response_text", error.text);
+    char *result = cJSON_PrintUnformatted(json);
+    cJSON_Delete(json);
+    return result;
+}
+
+bool validate_request(ACTIONS action, cJSON *json) {
+    // Find validation rules for this action
+    const ActionValidation *rules = NULL;
+    for (size_t i = 0; i < sizeof(validation_rules)/sizeof(validation_rules[0]); i++) {
+        if (validation_rules[i].action == action) {
+            rules = &validation_rules[i];
+            break;
+        }
+    }
+    
+    if (!rules) return false; // No rules defined for this action
+    
+    // Check required fields
+    for (int i = 0; rules->required_fields[i] != NULL; i++) {
+        if (!cJSON_HasObjectItem(json, rules->required_fields[i])) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
 char* process_client_request(const char *raw_json, int backend_fd, bool *handled_locally) {
     cJSON *json = cJSON_Parse(raw_json);
     if (!json) {
         log_warn("Invalid JSON from client");
         *handled_locally = true;
-        return strdup("{\"error\":\"invalid JSON\"}");
+		return create_error_response(ERROR_INVALID_JSON);
     }
 
     cJSON *action_json = cJSON_GetObjectItemCaseSensitive(json, "action");
@@ -36,10 +88,16 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
         log_warn("Missing or invalid 'action'");
         cJSON_Delete(json);
         *handled_locally = true;
-        return strdup("{\"error\":\"missing or invalid action\"}");
+		return create_error_response(ERROR_MISSING_ACTION);
     }
 
     ACTIONS action = (ACTIONS)action_json->valueint;
+	// After getting the action but before processing:
+	if (!validate_request(action, json)) {
+		cJSON_Delete(json);
+		*handled_locally = true;
+		return create_error_response(ERROR_MISSING_FIELDS);
+	}
 
 	if(action == PING || action == VALIDATE_USER || action == CREATE_USER){
 		switch (action) {
@@ -68,7 +126,7 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
 			log_warn("Missing or invalid token");
 			cJSON_Delete(json);
 			*handled_locally = true;
-			return strdup("{\"error\":\"unauthorized: token missing\"}");
+			return create_error_response(ERROR_MISSING_TOKEN);
 		}
 
 		int user_id;
@@ -76,7 +134,7 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
 			log_warn("Invalid or expired token");
 			cJSON_Delete(json);
 			*handled_locally = true;
-			return strdup("{\"error\":\"unauthorized: invalid token\"}");
+			return create_error_response(ERROR_INVALID_TOKEN);
 		}
 
 		log_info("Token validated. User ID: %d", user_id);
@@ -106,7 +164,7 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
 		return forward_json;
 	}
 	*handled_locally = true;
-	return strdup("{\"error\":\"missing or invalid action\"}");
+	return create_error_response(ERROR_MISSING_ACTION);
 }
 
 int connect_to_db_balancers(const char **hosts, const int *ports, int count) {

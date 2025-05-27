@@ -44,7 +44,6 @@ typedef char UUID[UUIDv7_SIZE];
 
 typedef enum {
   	VALIDATE_USER = 0,
-  	LOGOUT = 1,
   	CREATE_USER = 2, 
   	GET_USER_INFO = 3, 
   	CREATE_CHAT = 4, 
@@ -65,7 +64,16 @@ typedef struct {
     LBState state;
 } UdpLoadBalancer;
 
-void udp_lb_daemon();
+typedef struct {
+    int code;
+    const char *text;
+} ErrorResponse;
 
+typedef struct {
+    ACTIONS action;
+    const char *required_fields[10];
+} ActionValidation;
+
+void udp_lb_daemon();
 bool validate_token(const char *jwt, int *out_user_id);
 char *create_token(int user_id);

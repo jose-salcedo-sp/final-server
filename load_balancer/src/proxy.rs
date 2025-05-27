@@ -86,20 +86,24 @@ impl ReverseProxy {
     }
 
     fn parse_addr_pairs(raw: &[String]) -> Vec<Server> {
-        return raw.iter()
+        let servers = raw
+            .iter()
             .filter_map(|line| {
                 let mut parts = line.split_whitespace();
                 let tcp = parts.next()?.parse().ok()?;
                 let udp = parts.next()?.parse().ok()?;
-                Some(Server {
+                return Some(Server {
                     addr_identifier: None,
                     tcp_addr: tcp,
                     udp_addr: udp,
                     last_heartbeat: None,
                     is_up: false,
-                })
+                });
             })
             .collect();
+
+        println!("servers {:#?}", servers);
+        return servers;
     }
 }
 
@@ -113,7 +117,7 @@ impl ReverseProxyFl {
             let (mut client, addr) = listener.accept().await?;
             let proxy = self.clone();
             tokio::spawn(async move {
-                println!("ℹ️ FL Client {} connected", addr);
+                println!("ℹ FL Client {} connected", addr);
 
                 if let Some(backend_addr) = proxy.get_available_backend().await {
                     match TcpStream::connect(backend_addr).await {
@@ -195,7 +199,7 @@ impl ReverseProxyFl {
                             let parsed_tcp = parts[0].parse::<SocketAddr>();
                             let parsed_udp = parts[1].parse::<SocketAddr>();
 
-                            match (parsed_udp, parsed_tcp) {
+                            match (parsed_tcp, parsed_udp) {
                                 (Ok(tcp_addr), Ok(udp_addr)) => {
                                     if let Some(server) = backends
                                         .iter_mut()
@@ -224,7 +228,7 @@ impl ReverseProxyFl {
                     }
 
                     _ => {
-                        println!("⚠️ Unexpected message: \"{}\" from {}", message, from);
+                        println!("⚠ Unexpected message: \"{}\" from {}", message, from);
                     }
                 }
             }
@@ -239,7 +243,7 @@ impl ReverseProxyFl {
                     if let Some(last) = backend.last_heartbeat {
                         if last.elapsed() > Duration::from_secs(1) {
                             if backend.is_up {
-                                println!("⚠️ Backend {} timed out", backend.udp_addr);
+                                println!("⚠ Backend {} timed out", backend.udp_addr);
                             }
                             backend.is_up = false;
                         }
@@ -313,7 +317,7 @@ impl ReverseProxyLd {
                             }
                         }
                     } else {
-                        eprintln!("⚠️ No available backend for frontend client {}", addr);
+                        eprintln!("⚠ No available backend for frontend client {}", addr);
                     }
                 });
             }
@@ -352,7 +356,7 @@ impl ReverseProxyLd {
                             }
                         }
                     } else {
-                        eprintln!("⚠️ No available frontend for backend {}", addr);
+                        eprintln!("⚠ No available frontend for backend {}", addr);
                     }
                 });
             }
@@ -427,11 +431,11 @@ impl ReverseProxyLd {
                     _ if message.contains(' ') => {
                         let parts: Vec<&str> = message.split_whitespace().collect();
                         if parts.len() == 2 {
-                            let parsed_udp = parts[0].parse::<SocketAddr>();
-                            let parsed_tcp = parts[1].parse::<SocketAddr>();
+                            let parsed_tcp = parts[0].parse::<SocketAddr>();
+                            let parsed_udp = parts[1].parse::<SocketAddr>();
 
-                            match (parsed_udp, parsed_tcp) {
-                                (Ok(udp_addr), Ok(tcp_addr)) => {
+                            match (parsed_tcp, parsed_udp) {
+                                (Ok(tcp_addr), Ok(udp_addr)) => {
                                     if let Some(server) = servers
                                         .iter_mut()
                                         .find(|s| s.udp_addr == udp_addr && s.tcp_addr == tcp_addr)
@@ -442,7 +446,7 @@ impl ReverseProxyLd {
                                     } else {
                                         println!(
                                             "❌ Address pair {} {} not recognized",
-                                            parts[0], parts[1]
+                                            tcp_addr, udp_addr
                                         );
                                     }
                                 }
@@ -459,7 +463,7 @@ impl ReverseProxyLd {
                     }
 
                     _ => {
-                        println!("⚠️ Unexpected message: \"{}\" from {}", message, from);
+                        println!("⚠ Unexpected message: \"{}\" from {}", message, from);
                     }
                 }
             }
@@ -474,7 +478,7 @@ impl ReverseProxyLd {
                     if let Some(last) = server.last_heartbeat {
                         if last.elapsed() > Duration::from_secs(1) {
                             if server.is_up {
-                                println!("⚠️ Backend {} timed out", server.udp_addr);
+                                println!("⚠ Backend {} timed out", server.udp_addr);
                             }
                             server.is_up = false;
                         }
@@ -488,7 +492,7 @@ impl ReverseProxyLd {
                     if let Some(last) = server.last_heartbeat {
                         if last.elapsed() > Duration::from_secs(1) {
                             if server.is_up {
-                                println!("⚠️ Frontend {} timed out", server.udp_addr);
+                                println!("⚠ Frontend {} timed out", server.udp_addr);
                             }
                             server.is_up = false;
                         }

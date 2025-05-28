@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -40,6 +41,12 @@ pub struct ReverseProxyLd {
     data_servers_hearbeat_udp_addr: SocketAddr,
     data_servers: Arc<Mutex<Vec<Server>>>,
     next_index: AtomicUsize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ErrorMsg {
+    response_code: u16,
+    response_text: String,
 }
 
 impl ReverseProxy {
@@ -140,11 +147,28 @@ impl ReverseProxyFl {
                         }
                         Err(e) => {
                             eprintln!("❌ Could not connect to backend {}: {}", backend_addr, e);
-                            let _ = client.write_all(b"Could not connect to backend\n").await;
+
+                            let _ = client
+                                .write_all(
+                                    &serde_json::to_vec(&ErrorMsg {
+                                        response_code: 503,
+                                        response_text: "Could not connect to backend".to_string(),
+                                    })
+                                    .unwrap(),
+                                )
+                                .await;
                         }
                     }
                 } else {
-                    let _ = client.write_all(b"No available backend\n").await;
+                    let _ = client
+                        .write_all(
+                            &serde_json::to_vec(&ErrorMsg {
+                                response_code: 503,
+                                response_text: "No available backend".to_string(),
+                            })
+                            .unwrap(),
+                        )
+                        .await;
                 }
             });
         }
@@ -309,15 +333,29 @@ impl ReverseProxyLd {
                                     }
                                 }
                             }
-                            Err(e) => {
-                                eprintln!(
-                                    "❌ Failed to connect to backend {}: {}",
-                                    backend_addr, e
-                                );
+                            Err(_) => {
+                                let _ = frontend_stream
+                                    .write_all(
+                                        &serde_json::to_vec(&ErrorMsg {
+                                            response_code: 503,
+                                            response_text: "Failed to connect to backend"
+                                                .to_string(),
+                                        })
+                                        .unwrap(),
+                                    )
+                                    .await;
                             }
                         }
                     } else {
-                        eprintln!("⚠ No available backend for frontend client {}", addr);
+                        let _ = frontend_stream
+                            .write_all(
+                                &serde_json::to_vec(&ErrorMsg {
+                                    response_code: 503,
+                                    response_text: "No backend available".to_string(),
+                                })
+                                .unwrap(),
+                            )
+                            .await;
                     }
                 });
             }
@@ -348,15 +386,28 @@ impl ReverseProxyLd {
                                     }
                                 }
                             }
-                            Err(e) => {
-                                eprintln!(
-                                    "❌ Failed to connect to frontend {}: {}",
-                                    frontend_addr, e
-                                );
+                            Err(_) => {
+                                let _ = backend_stream
+                                    .write_all(
+                                        &serde_json::to_vec(&ErrorMsg {
+                                            response_code: 503,
+                                            response_text: "Failed to connect to frontend".to_string(),
+                                        })
+                                        .unwrap(),
+                                    )
+                                    .await;
                             }
                         }
                     } else {
-                        eprintln!("⚠ No available frontend for backend {}", addr);
+                        let _ = backend_stream
+                            .write_all(
+                                &serde_json::to_vec(&ErrorMsg {
+                                    response_code: 503,
+                                    response_text: "No frontend available".to_string(),
+                                })
+                                .unwrap(),
+                            )
+                            .await;
                     }
                 });
             }

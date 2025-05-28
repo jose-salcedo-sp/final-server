@@ -93,7 +93,7 @@ def send_tcp_message():
         print("-" * 40)
 
 # === MAIN ===
-if _name_ == "_main_":
+if __name__ == "__main__":
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.bind((BACKEND_UDP_IP, BACKEND_UDP_PORT))
 

@@ -13,6 +13,14 @@
 
 #define BUFFER_SIZE 4096
 
+#include <pthread.h>
+
+#define LB_IP "127.0.0.1"
+#define LB_TCP_PORT 3001
+#define LB_UDP_PORT 5001
+#define LOCAL_UDP_PORT 5003
+#define UDP_HEARTBEAT_INTERVAL 5
+
 void reset_database(MYSQL *conn);
 
 void error(const char *msg) {
@@ -496,6 +504,96 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 	
 }
 
+int connect_to_lb_tcp() {
+	int sockfd;
+	struct sockaddr_in lb_addr;
+
+	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+		perror("TCP socket error");
+		return -1;
+	}
+
+	lb_addr.sin_family = AF_INET;
+	lb_addr.sin_port = htons(LB_TCP_PORT);
+	inet_pton(AF_INET, LB_IP, &lb_addr.sin_addr);
+
+	if (connect(sockfd, (struct sockaddr*)&lb_addr, sizeof(lb_addr)) < 0) {
+		perror("TCP connect error");
+		close(sockfd);
+		return -1;
+	}
+
+	printf("TCP connected to Load Balancer at %s:%d\n", LB_IP, LB_TCP_PORT);
+	return sockfd;
+}
+
+void* udp_daemon(void* arg) {
+	int udp_sock;
+	struct sockaddr_in lb_addr, local_addr;
+	socklen_t addr_len = sizeof(struct sockaddr_in);
+
+	int auth_done = 0;
+	char tcp_addr[32] = "127.0.0.1:8080";
+	char udp_addr[32] = "127.0.0.1:5003";
+
+	if ((udp_sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+		perror("UDP socket");
+		pthread_exit(NULL);
+	}
+
+	memset(&local_addr, 0, sizeof(local_addr));
+	local_addr.sin_family = AF_INET;
+	local_addr.sin_addr.s_addr = INADDR_ANY;
+	local_addr.sin_port = htons(LOCAL_UDP_PORT);
+
+	if (bind(udp_sock, (struct sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
+		perror("bind UDP");
+		close(udp_sock);
+		pthread_exit(NULL);
+	}
+
+	memset(&lb_addr, 0, sizeof(lb_addr));
+	lb_addr.sin_family = AF_INET;
+	lb_addr.sin_port = htons(LB_UDP_PORT);
+	inet_pton(AF_INET, LB_IP, &lb_addr.sin_addr);
+
+	char buffer[128];
+
+	while (1) {
+		if (auth_done) {
+			strcpy(buffer, "OK");
+		}
+		else {
+			snprintf(buffer, sizeof(buffer), "AUTH %s %s", tcp_addr, udp_addr);
+		}
+
+		if (sendto(udp_sock, buffer, strlen(buffer), 0,
+			(struct sockaddr*)&lb_addr, sizeof(lb_addr)) < 0) {
+			perror("sendto UDP");
+		}
+		else {
+			printf("[UDP] Enviado: %s\n", buffer);
+		}
+
+		char recv_buffer[128] = { 0 };
+		int received = recvfrom(udp_sock, recv_buffer, sizeof(recv_buffer) - 1,
+			MSG_DONTWAIT, NULL, NULL);
+		if (received > 0) {
+			recv_buffer[received] = '\0';
+			printf("[UDP] Recibido del LB: %s\n", recv_buffer);
+			if (strcmp(recv_buffer, "OK") == 0) {
+				auth_done = 1;
+			}
+		}
+
+		sleep(UDP_HEARTBEAT_INTERVAL);
+	}
+
+	close(udp_sock);
+	pthread_exit(NULL);
+}
+
+
 int main() {
 	int tcp_port = 8080;
 	int opt = 1;
@@ -541,6 +639,20 @@ int main() {
         fprintf(stderr, "Connection failed: %s\n", mysql_error(conn));
         exit(1);
     }
+
+	// Establecer conexión TCP con el Load Balancer
+	int lb_tcp_fd = connect_to_lb_tcp();
+	if (lb_tcp_fd < 0) {
+		fprintf(stderr, "No se pudo establecer conexión TCP con el load balancer\n");
+		// exit(1); // si quieres terminar si no conecta
+	}
+
+	// Crear el hilo para el daemon UDP
+	pthread_t udp_thread;
+	if (pthread_create(&udp_thread, NULL, udp_daemon, NULL) != 0) {
+		perror("No se pudo crear el hilo del daemon UDP");
+	}
+
 
 	while (1){
 		if ((client_socket = accept(server_fd, (struct sockaddr *)&client_addr, &addr_len)) < 0) {

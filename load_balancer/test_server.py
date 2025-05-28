@@ -35,7 +35,7 @@ def send_heartbeat(udp_sock):
     while True:
         with state_lock:
             if send_mode == "ADDR":
-                msg = f"{args.backend_udp_ip}:{args.backend_udp_port} {args.backend_tcp_ip}:{args.backend_tcp_port}".encode()
+                msg = f"{args.backend_tcp_ip}:{args.backend_tcp_port} {args.backend_udp_ip}:{args.backend_udp_port}".encode()
             elif send_mode == "OK":
                 msg = b"OK"
             else:
@@ -93,7 +93,7 @@ def send_tcp_message():
         print("-" * 40)
 
 # === MAIN ===
-if __name__ == "__main__":
+if _name_ == "_main_":
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.bind((BACKEND_UDP_IP, BACKEND_UDP_PORT))
 

@@ -1,84 +1,86 @@
-# Avance Proyecto Final - Servidor Lógico
+# Final Project - Logical Server
 
-**Materia:** Cómputo Distribuido  
-**Profesor:** Juan Carlos Pimentel  
-**Fecha de entrega:** 05 de Junio de 2025
+**Course::** Cómputo Distribuido  
+**Professor:** Juan Carlos Pimentel  
+**Submission Date:** 05 de Junio de 2025
 
-## Integrantes del equipo
+## Team Members
 
 -   Demian Velasco Gómez Llanos (0253139@up.edu.mx)
 -   Hector Emiliano Flores Castellano (0254398@up.edu.mx)
 -   Diego Amin Hernandez Pallares (0250146@up.edu.mx)
 
-## Hitos implementados
+## Implemented Milestones
 
-### 1. Arquitectura TCP concurrente
+### 1. Concurrent TCP Architecture
 
--   Implementación de socket maestro en puerto TCP (`TCP_PORT`).
--   Por cada conexión entrante, se ejecuta un `fork()` que crea un proceso hijo exclusivo para ese cliente.
--   Esto permite manejo concurrente de múltiples sesiones sin bloqueo entre ellas.
--   Aislamiento total: si un cliente falla o termina, no afecta a los demás.
--   Se utiliza `poll()` para multiplexar eventos entre el cliente y el backend TCP desde el mismo proceso.
+-   Master socket implementation on TCP port  (`TCP_PORT`).
+-   ach incoming connection triggers a `fork()` creating a dedicated child process for that client.
+-   Enables concurrent handling of multiple sessions without blocking between them.
+-   Complete isolation: if one client fails or terminates, others remain unaffected.
+-   Uses `poll()` to multiplex events between client and backend TCP within the same process.
 
-### 2. Protocolo de comunicación (JSON)
+### 2. Communication Protocol (JSON)
 
--   Toda la comunicación entre cliente y servidor está basada en el formato JSON.
--   Se exige el campo `"action"` como entero, que representa el tipo de operación solicitada (ej. `PING`, `CREATE_USER`, `SEND_MESSAGE`).
--   Acciones básicas como `PING` se responden localmente en el servidor lógico.
--   Acciones más complejas (mensajes, validación de usuario, creación de chats, etc.) se reenvían al backend de base de datos.
--   Si el JSON está mal formado o falta un campo esencial, se responde con un mensaje de error también en formato JSON.
+-   All client-server communication is JSON-based.
+-   Requires an integer `"action"` field specifying the operation type (e.g., `PING`, `CREATE_USER`, `SEND_MESSAGE`).
+-   Basic actions like `PING` are handled locally by the logical server.
+-   Complex actions (messaging, user validation, chat creation) are forwarded to the database backend.
+-   Malformed JSON or missing required fields triggers a JSON error response.
 
-### 3. Comunicación con Backend
+### 3. Backend Communication
 
--   Se establece un socket TCP adicional hacia el backend en `127.0.0.1:6060` desde cada proceso hijo.
--   El servidor lógico actúa como intermediario entre cliente y backend:
-    -   Valida y preprocesa el JSON.
-    -   Reenvía solicitudes directamente.
-    -   Escucha respuestas del backend y las entrega al cliente.
--   Se modifica la respuesta del backend solo en casos particulares, como al generar tokens JWT tras un `CREATE_USER` exitoso.
+-   Each child process establishes an additional TCP socket to the backend at `127.0.0.1:6060`
+-   The logical server acts as middleware between client and backend:
+    -   Validates and preprocesses JSON.
+    -   Forwards requests directly.
+    -   Listens for backend responses and relays them to clients.
+-   Modifies backend responses only in specific cases (e.g., injecting JWT tokens after successful`CREATE_USER` ).
 
-### 4. Daemon UDP (Load Balancing)
+### 4. UDP Daemon (Load Balancing)
 
--   Se lanza un proceso hijo con `fork()` exclusivo para el demonio UDP.
--   Este proceso ejecuta `udp_lb_daemon()` que emite "heartbeats" periódicos vía UDP.
--   Los heartbeats contienen información del servicio disponible: IP y puertos del servidor lógico.
--   Permite que otros servicios descubran servidores activos y se implemente balanceo de carga en futuras etapas.
+-   A dedicated child process runs `fork()` for UDP heartbeats.
+-   Periodic heartbeats broadcast service availability (IP and ports of the logical server).
+-   Enables service discovery and future load balancing.
 
-### 5. Manejo de señales
+### 5. Signal Handling
 
--   `SIGINT` permite un cierre ordenado del servidor: cierra los sockets TCP (`sd`) y UDP (`udp_sd`) y termina el programa limpiamente.
--   `SIGCHLD` evita procesos zombi tras el `fork()` al recolectar procesos hijos muertos usando `waitpid(-1, ..., WNOHANG)`.
--   Se manejan ambas señales usando `signal()` en `main()` para garantizar estabilidad del proceso padre.
+-   `SIGINT`  enables graceful shutdown: closes TCP (`sd`) and UDP (`udp_sd`) sockets before termination.
+-   `SIGCHLD` prevents zombie processes of  `fork()` via `waitpid(-1, ..., WNOHANG)`.
+-   Both signals are managed using `signal()` in `main()` to ensure parent process stability.
 
-### 6. Autenticación con Tokens (JWT)
+### 6. JWT Token Authentication
 
--   Acciones sensibles como `SEND_MESSAGE`, `GET_USER_INFO` o `CREATE_CHAT` requieren autenticación con JWT.
--   El servidor lógico valida localmente los tokens antes de reenviar cualquier solicitud al backend.
--   Si el token es inválido o está ausente, se responde directamente con un error (`unauthorized`).
--   Al crear un nuevo usuario, el servidor genera un token simulado (`create_token`) y lo añade automáticamente a la respuesta.
--   Este esquema simula un flujo de autenticación real y puede integrarse fácilmente con JWT reales a futuro.
+-   Sensitive actions like `SEND_MESSAGE`, `GET_USER_INFO` or `CREATE_CHAT` require JWT authentication.
+-   The logical server validates tokens locally before forwarding requests.
+-   Invalid/missing tokens trigger direct (`unauthorized`) errors..
+-   User creation generates a simulated token (`create_token`) injected into the response.
+-   Designed for easy integration with real JWT in future iterations.
 
-### 7. Manejo de errores robusto
+### 7. Robust Error Handling
 
--   Se verifican todos los pasos críticos: apertura de sockets, conexión al backend, formato JSON, existencia de campos obligatorios.
--   Los errores se reportan con logs (`log_err`, `log_warn`, `log_info`) y se responden con mensajes JSON adecuados al cliente.
--   El servidor evita caídas inesperadas cerrando recursos correctamente y aislando errores por proceso.
+-   Verifies critical steps: socket creation, backend connections, JSON formatting, required fields.
+-   Errors are logged (`log_err`, `log_warn`, `log_info`) and returned as JSON responses.
+-   Prevents crashes through proper resource cleanup and process isolation.
 
-### 8. Pruebas de integración de red
+### 8. Network Integration Testing
 
--   Se probó satisfactoriamente la conexión entre el cliente y el servidor de datos de forma directa.
--   Se probó satisfactoriamente la conexión entre el cliente y el servidor de datos a través del Load Balancer
--   El servidor lógico pudo conectarse con el servidor de base de datos y retornar resultados al cliente
--   También se probó la conexión desde el cliente al servidor lógico **a través del balanceador UDP**
--   Se confirmaron respuestas correctas para `PING`, `CREATE_USER`, y `LOGIN`
--   Hubo algunas complicaciones al configurar IP's entre servidores y el load balancer pero al final se solucionó
+-   Successfully tested direct client-to-data-server connections.
+-   Verified client-to-data-server routing through the Load Balancer.
+-   Confirmed logical server can query database backend and return results to clients.
+-   Tested client-to-logical-server communication via UDP load balancer. **via UDP balancer**
+-   Validated correct responses for `PING`, `CREATE_USER`, and `LOGIN`
+-   Resolved initial IP configuration challenges between servers and load balancer.
 
 ## 📡 API Reference
 
-Todas las peticiones son objetos JSON que deben incluir un campo `"action"` con un valor numérico correspondiente a la operación deseada.  
-Dependiendo del tipo de acción, puede requerirse también el campo `"token"` para autenticación.
+All requests must be JSON objects containing an `"action"` field with a numeric value corresponding to the desired operation.
+Certain actions may require an additional `"token"` field for authentication.
+
+During user authentication (VALIDATE_USER), after successful validation, we perform a GET_USER_INFO query to retrieve the user's ID, then generate and return both the token and ID to the client. For subsequent requests, the client only needs to provide the token—the server automatically injects the user ID (extracted from the token) into the request to the database. Note that the ID may be mapped to different fields depending on the context (e.g., created_by, sender_id, etc.), so ensure consistent key naming across endpoints to avoid mismatches.
 
 ### Action `0` – Validate User
+
 
 **Request:**
 
@@ -290,85 +292,6 @@ Dependiendo del tipo de acción, puede requerirse también el campo `"token"` pa
     ]
 }
 ```
-
-## Error Responses
-
-### Invalid JSON Format
-
-**Response:**
-
-```json
-{
-    "error": "invalid JSON"
-}
-```
-
-### Missing or Invalid Action
-
-**Response:**
-
-```json
-{
-    "error": "missing or invalid action"
-}
-```
-
-### Token Validation Errors
-
-**Response:**
-
-```json
-{
-    "error": "unauthorized: token missing"
-}
-```
-
-### Invalid/Expired Token
-
-**Response:**
-
-```json
-{
-    "error": "unauthorized: invalid token"
-}
-```
-
-### Database Forwarding Errors
-
-**Response:**
-
-```json
-{
-    "error": "backend service unavailable",
-    "code": 503
-}
-```
-
-### Action-Specific Errors
-
-**Response:**
-
-```json
-{
-    "action": 2,
-    "status": "error",
-    "message": "username already exists"
-}
-```
-
-### Chat Creation Failed
-
-**Response:**
-
-```json
-{
-    "action": 4,
-    "status": "error",
-    "message": "participant not found"
-}
-```
-
----
 
 ## 💾 Data Structures
 

@@ -107,7 +107,55 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
 				cJSON_Delete(json);
 				return strdup("{\"response\":\"pong\"}");
 
+                //LOGIN UwU
 			case VALIDATE_USER:
+                // 1. Extraer nombre de usuario y contraseña del JSON recibido del cliente
+                cJSON *username = cJSON_GetObjectItem(json, "key");
+                cJSON *password = cJSON_GetObjectItem(json, "password");
+                
+                // 2. Crear un nuevo JSON para hacer la consulta a la base de datos
+                //    Solo se envía el nombre de usuario para recuperar el hash de la contraseña
+                cJSON *db_query = cJSON_CreateObject();
+                cJSON_AddNumberToObject(db_query, "action", GET_USER_AUTH_DATA); // Acción específica para obtener datos de autenticación
+                cJSON_AddStringToObject(db_query, "username", username->valuestring);
+                
+                // 3. Serializar el JSON y enviarlo al backend (módulo que interactúa con la DB)
+                char *db_request = cJSON_PrintUnformatted(db_query);
+                write(backend_fd, db_request, strlen(db_request));
+                free(db_request);
+                cJSON_Delete(db_query);
+                
+                // 4. Esperar la respuesta del backend (que debe contener el hash almacenado en la base de datos)
+                char db_response[BUFFER_SIZE];
+                int len = read(backend_fd, db_response, BUFFER_SIZE - 1);
+                db_response[len] = '\0';  // Asegurar terminación nula de la cadena
+                
+                // 5. Parsear el JSON recibido desde la base de datos
+                //    y obtener el hash de la contraseña asociado al nombre de usuario
+                cJSON *db_json = cJSON_Parse(db_response);
+                const char *stored_hash = cJSON_GetObjectItem(db_json, "password_hash")->valuestring;
+                
+                // 6. Verificar si la contraseña proporcionada por el usuario coincide con el hash almacenado
+                if (verify_password(password->valuestring, stored_hash)) {
+                    // 6.a. Si coincide, generar un token JWT usando el ID del usuario
+                    int user_id = cJSON_GetObjectItem(db_json, "id")->valueint;
+                    char *token = create_token(user_id);
+                    
+                    // 6.b. Crear una respuesta JSON con estado "ok" y el token
+                    cJSON *response = cJSON_CreateObject();
+                    cJSON_AddStringToObject(response, "status", "ok");
+                    cJSON_AddStringToObject(response, "token", token);
+                    char *response_str = cJSON_PrintUnformatted(response);
+                    
+                    // Limpiar memoria antes de retornar
+                    cJSON_Delete(db_json);
+                    free(token);
+                    return response_str;
+                } else {
+                    // 6.c. Si la contraseña no coincide, retornar un error de credenciales inválidas
+                    cJSON_Delete(db_json);
+                    return create_error_response((ErrorResponse){401, "Invalid credentials"});
+                }
 			case CREATE_USER:
 				log_info("Forwarding action %d to DB", action);
 				*handled_locally = false;
@@ -311,6 +359,11 @@ char *create_token(int user_id) {
   char *token = jwt_encode_str(jwt);
   jwt_free(jwt);
   return token;
+}
+
+bool verify_password(const char *input_pass, const char *hashed_pass) {
+    const char *encrypted = crypt(input_pass, hashed_pass);
+    return strcmp(encrypted, hashed_pass) == 0;
 }
 
 

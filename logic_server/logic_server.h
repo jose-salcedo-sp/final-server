@@ -1,5 +1,6 @@
 #include "../dbg.h"
 #include "../lib/cjson/cJSON.h"
+//#include "bcrypt.h"
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -18,6 +19,8 @@
 #include <sys/time.h>
 #include <time.h>
 #include <jwt.h>
+
+
 
 #define BUFFER_SIZE 4096
 #define UUIDv7_SIZE 32
@@ -44,6 +47,7 @@ typedef char UUID[UUIDv7_SIZE];
 
 typedef enum {
   	VALIDATE_USER = 0,
+	GET_USER_AUTH_DATA = 1, 
   	CREATE_USER = 2, 
   	GET_USER_INFO = 3, 
   	CREATE_CHAT = 4, 
@@ -77,3 +81,4 @@ typedef struct {
 void udp_lb_daemon();
 bool validate_token(const char *jwt, int *out_user_id);
 char *create_token(int user_id);
+bool verify_password(const char *input_pass, const char *hashed_pass);

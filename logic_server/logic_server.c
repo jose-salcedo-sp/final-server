@@ -114,45 +114,53 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
                 cJSON *password = cJSON_GetObjectItem(json, "password");
                 
                 // 2. Crear un nuevo JSON para hacer la consulta a la base de datos
-                //    Solo se envía el nombre de usuario para recuperar el hash de la contraseña
                 cJSON *db_query = cJSON_CreateObject();
-                cJSON_AddNumberToObject(db_query, "action", GET_USER_AUTH_DATA); // Acción específica para obtener datos de autenticación
+                cJSON_AddNumberToObject(db_query, "action", GET_USER_AUTH_DATA);
                 cJSON_AddStringToObject(db_query, "username", username->valuestring);
                 
-                // 3. Serializar el JSON y enviarlo al backend (módulo que interactúa con la DB)
+                // 3. Serializar el JSON y enviarlo al backend
                 char *db_request = cJSON_PrintUnformatted(db_query);
                 write(backend_fd, db_request, strlen(db_request));
                 free(db_request);
                 cJSON_Delete(db_query);
                 
-                // 4. Esperar la respuesta del backend (que debe contener el hash almacenado en la base de datos)
+                // 4. Esperar la respuesta del backend
                 char db_response[BUFFER_SIZE];
                 int len = read(backend_fd, db_response, BUFFER_SIZE - 1);
-                db_response[len] = '\0';  // Asegurar terminación nula de la cadena
+                db_response[len] = '\0';
                 
-                // 5. Parsear el JSON recibido desde la base de datos
-                //    y obtener el hash de la contraseña asociado al nombre de usuario
+                // 5. Parsear la respuesta de la base de datos
                 cJSON *db_json = cJSON_Parse(db_response);
-                const char *stored_hash = cJSON_GetObjectItem(db_json, "password_hash")->valuestring;
+                if (!db_json) {
+                    cJSON_Delete(json);
+                    return create_error_response((ErrorResponse){500, "Invalid DB response"});
+                }
                 
-                // 6. Verificar si la contraseña proporcionada por el usuario coincide con el hash almacenado
-                if (verify_password(password->valuestring, stored_hash)) {
-                    // 6.a. Si coincide, generar un token JWT usando el ID del usuario
+                cJSON *db_password = cJSON_GetObjectItem(db_json, "password");
+                if (!db_password || !cJSON_IsString(db_password)) {
+                    cJSON_Delete(db_json);
+                    return create_error_response((ErrorResponse){401, "Invalid credentials"});
+                }
+                
+                // 6. Comparación DIRECTA de contraseñas 
+                if (strcmp(password->valuestring, db_password->valuestring) == 0) {
+                    // 6.a. Si coinciden, generar token
                     int user_id = cJSON_GetObjectItem(db_json, "id")->valueint;
                     char *token = create_token(user_id);
                     
-                    // 6.b. Crear una respuesta JSON con estado "ok" y el token
+                    // 6.b. Crear respuesta
                     cJSON *response = cJSON_CreateObject();
                     cJSON_AddStringToObject(response, "status", "ok");
                     cJSON_AddStringToObject(response, "token", token);
                     char *response_str = cJSON_PrintUnformatted(response);
                     
-                    // Limpiar memoria antes de retornar
+                    // Limpiar
                     cJSON_Delete(db_json);
+                    cJSON_Delete(response);
                     free(token);
                     return response_str;
                 } else {
-                    // 6.c. Si la contraseña no coincide, retornar un error de credenciales inválidas
+                    // 6.c. Si no coinciden
                     cJSON_Delete(db_json);
                     return create_error_response((ErrorResponse){401, "Invalid credentials"});
                 }
@@ -256,14 +264,21 @@ void handle_client(int client_sock) {
     char buffer[BUFFER_SIZE];
     int bytes_received;
 
-	int db_sock = connect_to_db_balancers(db_ips, db_ports_tcp, LB_COUNT);
+    int db_sock = connect_to_db_balancers(db_ips, db_ports_tcp, LB_COUNT);
     if (db_sock < 0) {
         log_err("Failed to connect to DB");
-		const char *error_json = "{ \"response_code\": 503, \"response_text\": \"Service unavailable: all DB load balancers are unreachable\" }";
-		send(client_sock, error_json, strlen(error_json), 0);
+        const char *error_json = "{ \"response_code\": 503, \"response_text\": \"Service unavailable: all DB load balancers are unreachable\" }";
+        send(client_sock, error_json, strlen(error_json), 0);
         close(client_sock);
         exit(1);
     }
+
+    // Configurar timeout de 5 segundos para el socket de DB
+    struct timeval tv;
+    tv.tv_sec = 15;  // Timeout en segundos
+    tv.tv_usec = 0;
+    setsockopt(db_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(db_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
     struct pollfd fds[2];
     fds[0].fd = client_sock;
@@ -299,7 +314,14 @@ void handle_client(int client_sock) {
 
         if (fds[1].revents & POLLIN) {
             bytes_received = recv(db_sock, buffer, BUFFER_SIZE - 1, 0);
-            if (bytes_received <= 0) break;
+            if (bytes_received <= 0) {
+                if (errno == EWOULDBLOCK || errno == EAGAIN) {
+                    log_warn("DB response timeout");
+                    send(client_sock, create_error_response(ERROR_DB_UNAVAILABLE), 
+                         strlen(create_error_response(ERROR_DB_UNAVAILABLE)), 0);
+                }
+                break;
+            }
             buffer[bytes_received] = '\0';
 
             log_info("Received response from DB: %s", buffer);
@@ -312,7 +334,7 @@ void handle_client(int client_sock) {
                 if (act && act->valueint == CREATE_USER && status &&
                     strcmp(status->valuestring, "ok") == 0) {
 
-                    int user_id = 42; // ⚠️ Simulado, idealmente viene del DB
+                    int user_id = 42; // Simulado, idealmente viene del DB
                     char *jwt = create_token(user_id);
                     cJSON_AddStringToObject(json, "token", jwt);
                     free(jwt);
@@ -361,10 +383,6 @@ char *create_token(int user_id) {
   return token;
 }
 
-bool verify_password(const char *input_pass, const char *hashed_pass) {
-    const char *encrypted = crypt(input_pass, hashed_pass);
-    return strcmp(encrypted, hashed_pass) == 0;
-}
 
 
 int main() {

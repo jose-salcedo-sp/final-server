@@ -12,10 +12,9 @@
 #include "../lib/cjson/cJSON.h"
 #include "user_manager.h"
 #include "chat_manager.h"
+#include "heartbeat_manager.h"
 
 #define BUFFER_SIZE 4096
-
-#include <pthread.h>
 
 #define LB_IP "10.7.27.134"
 #define LB_UDP_PORT 5002
@@ -509,78 +508,6 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 }
 
 
-void* udp_daemon(void* arg) {
-	int udp_sock;
-	struct sockaddr_in lb_addr, local_addr;
-	socklen_t addr_len = sizeof(struct sockaddr_in);
-
-	int auth_done = 0;
-	char tcp_addr[32];
-	sprintf(tcp_addr, "%s:%d", LOCAL_IP, LOCAL_TCP_PORT);
-
-	char udp_addr[32];
-	sprintf(udp_addr, "%s:%d", LOCAL_IP, LOCAL_UDP_PORT);
-
-	if ((udp_sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-		perror("UDP socket");
-		pthread_exit(NULL);
-	}
-
-	memset(&local_addr, 0, sizeof(local_addr));
-	local_addr.sin_family = AF_INET;
-	local_addr.sin_addr.s_addr = INADDR_ANY;
-	local_addr.sin_port = htons(LOCAL_UDP_PORT);
-
-	if (bind(udp_sock, (struct sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
-		perror("bind UDP");
-		close(udp_sock);
-		pthread_exit(NULL);
-	}
-
-	memset(&lb_addr, 0, sizeof(lb_addr));
-	lb_addr.sin_family = AF_INET;
-	lb_addr.sin_port = htons(LB_UDP_PORT);
-	inet_pton(AF_INET, LB_IP, &lb_addr.sin_addr);
-
-	char buffer[128];
-
-	while (1) {
-		if (auth_done) {
-			strcpy(buffer, "OK");
-		}
-		else {
-			snprintf(buffer, sizeof(buffer), "%s %s", tcp_addr, udp_addr);
-		}
-
-		if (sendto(udp_sock, buffer, strlen(buffer), 0,
-			(struct sockaddr*)&lb_addr, sizeof(lb_addr)) < 0) {
-			perror("sendto UDP");
-		}
-		else {
-			printf("[UDP] Enviado: %s\n", buffer);
-		}
-
-		char recv_buffer[128] = { 0 };
-		int received = recvfrom(udp_sock, recv_buffer, sizeof(recv_buffer) - 1,
-			MSG_DONTWAIT, NULL, NULL);
-		if (received > 0) {
-			recv_buffer[received] = '\0';
-			printf("[UDP] Recibido del LB: %s\n", recv_buffer);
-			if (strcmp(recv_buffer, "OK") == 0) {
-				auth_done = 1;
-			}else{
-				if (strcmp(recv_buffer, "AUTH") == 0) {
-					auth_done = 0;
-				}
-			}
-		}
-
-		sleep(UDP_HEARTBEAT_INTERVAL);
-	}
-
-	close(udp_sock);
-	pthread_exit(NULL);
-}
 
 
 int main() {

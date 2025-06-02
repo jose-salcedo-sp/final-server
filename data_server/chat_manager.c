@@ -134,7 +134,7 @@ int get_chat_messages(MYSQL *conn, int chat_id, char *last_update_timestamp, Mes
 		snprintf(query, sizeof(query), "SELECT m.message_id, m.sender_id, u.username AS sender_username, m.content, m.message_type, m.created_at FROM messages m JOIN users u ON u.user_id = m.sender_id WHERE m.chat_id = %d AND m.is_deleted = 0", chat_id);
 		
     } else {
-		snprintf(query, sizeof(query), "SELECT m.message_id, m.sender_id, u.username AS sender_username, m.content, m.message_type, m.created_at FROM messages m JOIN users u ON u.user_id = m.sender_id WHERE m.chat_id = %d AND m.is_deleted = 0 AND (m.created_at > %s)", chat_id, last_update_timestamp);
+		snprintf(query, sizeof(query), "SELECT m.message_id, m.sender_id, u.username AS sender_username, m.content, m.message_type, m.created_at FROM messages m JOIN users u ON u.user_id = m.sender_id WHERE m.chat_id = %d AND m.is_deleted = 0 AND (m.created_at > '%s')", chat_id, last_update_timestamp);
     }
 
 	printf("query: \n%s\n", query);

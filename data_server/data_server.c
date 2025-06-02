@@ -7,11 +7,22 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+#include <signal.h>
+
 #include "../lib/cjson/cJSON.h"
 #include "user_manager.h"
 #include "chat_manager.h"
+#include "heartbeat_manager.h"
 
 #define BUFFER_SIZE 4096
+
+#define LB_IP "10.7.27.134"
+#define LB_UDP_PORT 5002
+
+#define LOCAL_IP "10.7.26.84"
+#define LOCAL_UDP_PORT 5001
+#define LOCAL_TCP_PORT 5000
+#define UDP_HEARTBEAT_INTERVAL 1
 
 void reset_database(MYSQL *conn);
 
@@ -496,8 +507,10 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 	
 }
 
+
+
+
 int main() {
-	int tcp_port = 8080;
 	int opt = 1;
 
 	int server_fd, client_socket;
@@ -513,19 +526,14 @@ int main() {
 
 	server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(tcp_port);
+    server_addr.sin_port = htons(LOCAL_TCP_PORT);
 
     if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) error("bind failed");
 
     if (listen(server_fd, 3) < 0) error("listen failed");
 
-	//char receive_buffer[4096] = "{ \"action\": 2, \"username\": \"ehinojosa\", \"email\": \"ehinojosa@example.com\", \"password\": \"sdahsdiuh\" }";
-	//char receive_buffer[4096] = "{ \"action\": 3, \"key\": \"exampleUser3\"}";
-	//char receive_buffer[4096] = "{\"action\": 4, \"is_group\": true, \"chat_name\": \"Group Chat 2\", \"created_by\": 12, \"participant_ids\": [4,6]}";
-	//char receive_buffer[4096] = "{\"action\": 5, \"chat_id\": 1, \"added_by\": 7, \"participant_ids\": [12]}";
-	//char receive_buffer[4096] = "{\"action\": 6, \"chat_id\":2, \"sender_id\": 12, \"content\": \"Hello Everyone! Welcome to the groupchat\", \"message_type\": \"user\"}";
-	//char receive_buffer[4096] = "{\"action\": 7, \"user_id\": 12, \"last_update_timestamp\": null}";
-	//char receive_buffer[4096] = "{\"action\": 8, \"chat_id\": 2, \"last_update_timestamp\": null}";
+	signal(SIGCHLD, SIG_IGN);
+
 
 
     MYSQL *conn;
@@ -542,40 +550,71 @@ int main() {
         exit(1);
     }
 
+	pthread_t udp_thread;
+	if (pthread_create(&udp_thread, NULL, udp_daemon, NULL) != 0) {
+		perror("No se pudo crear el hilo del daemon UDP");
+	}
+
+
 	while (1){
 		if ((client_socket = accept(server_fd, (struct sockaddr *)&client_addr, &addr_len)) < 0) {
-            perror("accept");
-            continue;
-        }
-
-		printf("Client connected.\n");
-
-		char receive_buffer[BUFFER_SIZE];
-    	char response_buffer[BUFFER_SIZE];
-
-		memset(receive_buffer, 0, BUFFER_SIZE);
-        int valread = read(client_socket, receive_buffer, BUFFER_SIZE - 1);
-
-		printf("received {%s}\n", receive_buffer);
-
-		if (valread < 1){
-			perror("valread");
+			perror("accept");
 			continue;
 		}
 
-		receive_buffer[valread] = '\0';
-        printf("Received query: %s\n", receive_buffer);
-		cJSON *json = cJSON_Parse(receive_buffer);
+		pid_t pid = fork();
 
-		printf("Flag\n");
+		if (pid == 0) {
+			close(server_fd);
 
-		handle_action(conn, json, response_buffer);
-	
-		printf("\nResponse:\n%s\n",response_buffer);
+			MYSQL *child_conn = mysql_init(NULL);
+			if (!mysql_real_connect(child_conn, server, user, password, database, 0, NULL, 0)) {
+				fprintf(stderr, "Child DB connection failed: %s\n", mysql_error(child_conn));
+				exit(1);
+			}
 
-		send(client_socket, response_buffer, strlen(response_buffer), 0);
+			printf("New Client Connection\n");
+
+			char receive_buffer[BUFFER_SIZE];
+			char response_buffer[BUFFER_SIZE];
+			memset(receive_buffer, 0, BUFFER_SIZE);
+
+			int valread = read(client_socket, receive_buffer, BUFFER_SIZE - 1);
+			if (valread < 1){
+				perror("read");
+				printf("wtf\n");
+				close(client_socket);
+				mysql_close(child_conn);
+				exit(1);
+			}
+
+			receive_buffer[valread] = '\0';
+
+			printf("-> Received: %s\n\n", receive_buffer);
+			cJSON *json = cJSON_Parse(receive_buffer);
+			if (!json) {
+				fprintf(stderr, "Invalid JSON received\n");
+				close(client_socket);
+				mysql_close(child_conn);
+				exit(1);
+			}
+
+			handle_action(child_conn, json, response_buffer);
+			cJSON_Delete(json);
+
+			send(client_socket, response_buffer, strlen(response_buffer), 0);
+			printf("<- Sent: %s\n\n", response_buffer);
+			close(client_socket);
+			mysql_close(child_conn);
+			printf("Client Disconnected\n");
+			exit(0);
+		} else if (pid > 0) {
+			close(client_socket);
+		} else {
+			perror("fork");
+			close(client_socket);
+		}
 	}
-	//mysql_free_result(res);
     mysql_close(conn);
 
     return 0;
@@ -608,7 +647,6 @@ void reset_database(MYSQL *conn) {
     for (int i = 0; i < sizeof(queries) / sizeof(queries[0]); i++) {
         if (mysql_query(conn, queries[i])) {
             fprintf(stderr, "Query failed: %s\nError: %s\n", queries[i], mysql_error(conn));
-            // Optionally exit or rollback if using transactions
         }
     }
 }

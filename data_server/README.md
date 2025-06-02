@@ -4,14 +4,16 @@ A lightweight C-based server that handles database operations for a messaging ap
 
 ---
 
-## 📑 Table of Contents
+## 📁 Table of Contents
 
 * [Prerequisites](#prerequisites)
 * [Installation](#installation)
 
-  * [1. Database Setup](#1-database-setup)
-  * [2. Environment Variables](#2-environment-variables)
-  * [3. Compilation](#3-compilation)
+  * [1. Clone & Setup](#1-clone--setup)
+  * [2. MySQL Database Initialization](#2-mysql-database-initialization)
+  * [3. Environment Configuration](#3-environment-configuration)
+  * [4. Dependencies](#4-dependencies)
+  * [5. Build & Run](#5-build--run)
 * [API Reference](#api-reference)
 * [Data Structures](#data-structures)
 * [Error Handling](#error-handling)
@@ -22,108 +24,82 @@ A lightweight C-based server that handles database operations for a messaging ap
 
 ## 📦 Prerequisites
 
-Ensure the following dependencies are installed:
+Ensure the following dependencies are installed on your **Linux** system:
 
-* **MySQL Server**
-* **C Compiler** (e.g., GCC)
-* **MySQL C Connector library**
-* **cJSON library**
-
----
-
-## 🛠️ Installation
-
-### 1. Database Setup
-
-Execute the following SQL to initialize the database schema:
-
-<details>
-<summary>Click to expand SQL schema</summary>
-
-```sql
--- users table
-CREATE TABLE users (
-  user_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  username VARCHAR(50) NOT NULL,
-  email VARCHAR(100) NOT NULL,
-  password_hash TEXT NOT NULL,
-  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id),
-  UNIQUE KEY username (username),
-  UNIQUE KEY email (email)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- chats table
-CREATE TABLE chats (
-  chat_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  is_group TINYINT(1) DEFAULT '0',
-  chat_name VARCHAR(100),
-  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  last_message_id BIGINT UNSIGNED DEFAULT NULL,
-  PRIMARY KEY (chat_id),
-  KEY fk_chats_last_message (last_message_id),
-  CONSTRAINT fk_chats_last_message FOREIGN KEY (last_message_id)
-    REFERENCES messages (message_id)
-    ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- chat_participants table
-CREATE TABLE chat_participants (
-  chat_id BIGINT UNSIGNED NOT NULL,
-  user_id BIGINT UNSIGNED NOT NULL,
-  joined_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  is_admin TINYINT(1) DEFAULT '0',
-  PRIMARY KEY (chat_id, user_id),
-  CONSTRAINT fk_cp_chat FOREIGN KEY (chat_id)
-    REFERENCES chats (chat_id) ON DELETE CASCADE,
-  CONSTRAINT fk_cp_user FOREIGN KEY (user_id)
-    REFERENCES users (user_id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- messages table
-CREATE TABLE messages (
-  message_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  chat_id BIGINT UNSIGNED,
-  sender_id BIGINT UNSIGNED,
-  content TEXT,
-  message_type VARCHAR(20) DEFAULT 'text',
-  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  is_deleted TINYINT(1) DEFAULT '0',
-  PRIMARY KEY (message_id),
-  KEY fk_message_chat (chat_id),
-  KEY fk_message_sender (sender_id),
-  CONSTRAINT fk_message_chat FOREIGN KEY (chat_id)
-    REFERENCES chats (chat_id) ON DELETE SET NULL,
-  CONSTRAINT fk_message_sender FOREIGN KEY (sender_id)
-    REFERENCES users (user_id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-</details>
+* **MySQL Server (Community Edition)**
+* **GCC (C Compiler)**
+* **Make**
+* **MySQL C Connector library (`libmysqlclient-dev`)**
 
 ---
 
-### 2. Environment Variables
+## ⚒️ Installation
 
-Set the following variables in your shell or `.env` file:
+### 1. Clone & Setup
 
 ```bash
-export DB_HOST="your_database_host"
-export DB_USER="your_database_username"
-export DB_PASS="your_database_password"
-export DB_NAME="your_database_name"
+# Clone this repository
+$ git clone https://github.com/your_org/data-server.git
+$ cd data-server
 ```
 
----
-
-### 3. Compilation
-
-Compile using GCC:
+### 2. MySQL Database Initialization
 
 ```bash
-gcc -o server server.c -lmysqlclient -lcjson
+# Log into MySQL as root
+$ mysql -u root -p
+
+# Inside the MySQL shell:
+mysql> CREATE DATABASE messengerdatabase;
+mysql> CREATE USER 'db_admin'@'%' IDENTIFIED BY 'your_password';
+mysql> GRANT ALL PRIVILEGES ON messengerdatabase.* TO 'db_admin'@'%';
+mysql> FLUSH PRIVILEGES;
 ```
-> Alternatively run command make to handle compilation
+
+Create the tables by running the SQL schema (see schema in next section or in `schema.sql` file).
+
+### 3. Environment Configuration
+
+Create a `.env` file inside the `data_server/` folder:
+
+```env
+DB_HOST=localhost
+DB_USER=db_admin
+DB_PASS=your_password
+DB_NAME=messengerdatabase
+```
+
+### 4. Dependencies
+
+```bash
+# Install dependencies
+$ sudo apt update
+$ sudo apt install build-essential libmysqlclient-dev make
+```
+
+If using **WSL**, implement port forwarding from an admin CMD for your TCP and UDP ports (e.g., 5000 and 5001):
+
+```powershell
+netsh interface portproxy add v4tov4 listenport=5000 listenaddress=0.0.0.0 connectport=5000 connectaddress=<WSL_IP>
+netsh interface portproxy add v4tov4 listenport=5001 listenaddress=0.0.0.0 connectport=5001 connectaddress=<WSL_IP>
+```
+
+### 5. Build & Run
+
+```bash
+# Add your load balancers to config
+$ cat load_balancers.json
+[
+  {"ip": "10.7.27.134", "udp_port": 5002, "tcp_port": 3001},
+  {"ip": "10.7.27.135", "udp_port": 5002, "tcp_port": 3001}
+]
+
+# Compile
+$ make
+
+# Run the server
+$ ./server
+```
 
 ---
 
@@ -131,7 +107,9 @@ gcc -o server server.c -lmysqlclient -lcjson
 
 All requests are JSON objects with an `"action"` field.
 
-### Action `0` – Validate User
+---
+
+### Action `0` — Validate User
 
 **Request:**
 
@@ -147,7 +125,7 @@ All requests are JSON objects with an `"action"` field.
 
 ---
 
-### Action `2` – Create User
+### Action `2` — Create User
 
 **Request:**
 
@@ -156,19 +134,19 @@ All requests are JSON objects with an `"action"` field.
   "action": 2,
   "username": "new_user",
   "email": "user@example.com",
-  "password": "password_hash"
+  "password": "hashed_password"
 }
 ```
 
 **Response:**
 
 ```json
-{ "response_code": 200, "response_text": "..." }
+{ "response_code": 200, "response_text": "User new_user with email user@example.com has been stored in the database" }
 ```
 
 ---
 
-### Action `3` – Get User Info
+### Action `3` — Get User Info
 
 **Request:**
 
@@ -181,6 +159,7 @@ All requests are JSON objects with an `"action"` field.
 ```json
 {
   "response_code": 200,
+  "response_text": "User username was found with the ID: 1",
   "user_id": 1,
   "username": "username",
   "email": "user@example.com"
@@ -189,7 +168,7 @@ All requests are JSON objects with an `"action"` field.
 
 ---
 
-### Action `4` – Create Chat
+### Action `4` — Create Chat
 
 **Request:**
 
@@ -199,13 +178,19 @@ All requests are JSON objects with an `"action"` field.
   "is_group": true,
   "chat_name": "Group Chat",
   "created_by": 1,
-  "participant_ids": [2, 3, 4]
+  "participant_ids": [2, 3]
 }
+```
+
+**Response:**
+
+```json
+{ "response_code": 200, "response_text": "Chat Group Chat was succesfully created with 3 users" }
 ```
 
 ---
 
-### Action `5` – Add to Group Chat
+### Action `5` — Add to Group Chat
 
 **Request:**
 
@@ -214,13 +199,19 @@ All requests are JSON objects with an `"action"` field.
   "action": 5,
   "chat_id": 1,
   "added_by": 1,
-  "participant_ids": [5, 6]
+  "participant_ids": [4, 5]
 }
+```
+
+**Response:**
+
+```json
+{ "response_code": 200, "response_text": "Chat 1 has succesfully added 2 users" }
 ```
 
 ---
 
-### Action `6` – Send Message
+### Action `6` — Send Message
 
 **Request:**
 
@@ -229,42 +220,145 @@ All requests are JSON objects with an `"action"` field.
   "action": 6,
   "chat_id": 1,
   "sender_id": 1,
-  "content": "Hello everyone!",
+  "content": "Hello World!",
   "message_type": "text"
 }
 ```
 
+**Response:**
+
+```json
+{ "response_code": 200, "response_text": "Message from 1 was succesfully sent to chat 1" }
+```
+
 ---
 
-### Action `7` – Get Chats
+### Action `7` — Get Chats
 
 **Request:**
 
 ```json
+{ "action": 7, "user_id": 1, "last_update_timestamp": "2023-01-01 00:00:00" }
+```
+
+**Response:**
+
+```json
 {
-  "action": 7,
-  "user_id": 1,
-  "last_update_timestamp": "2023-01-01 00:00:00"
+  "response_code": 200,
+  "response_text": "2 chats succesfully retreived",
+  "chats_array": [
+    {
+      "chat_id": 1,
+      "chat_name": "Group Chat",
+      "last_message_content": "Hi",
+      "last_message_type": "text",
+      "last_message_timestamp": "2023-06-01 12:34:56",
+      "last_message_sender": "user1"
+    }
+  ]
 }
 ```
 
 ---
 
-### Action `8` – Get Chat Messages
+### Action `8` — Get Chat Messages
 
 **Request:**
 
 ```json
+{ "action": 8, "chat_id": 1, "last_update_timestamp": "2023-01-01 00:00:00" }
+```
+
+**Response:**
+
+```json
 {
-  "action": 8,
+  "response_code": 200,
+  "response_text": "3 messages succesfully retreived",
+  "messages_array": [
+    {
+      "message_id": 1,
+      "sender_id": 2,
+      "sender_username": "user2",
+      "content": "Hello",
+      "message_type": "text",
+      "created_at": "2023-06-01 12:00:00"
+    }
+  ]
+}
+```
+
+---
+
+### Action `9` — Get Chat Info
+
+**Request:**
+
+```json
+{ "action": 9, "chat_id": 1 }
+```
+
+**Response:**
+
+```json
+{
+  "response_code": 200,
+  "response_text": "Chat info for ID 1 retrieved successfully",
   "chat_id": 1,
-  "last_update_timestamp": "2023-01-01 00:00:00"
+  "chat_name": "Group Chat",
+  "is_group": true,
+  "participants": [
+    { "user_id": 1, "username": "admin", "is_admin": 1 },
+    { "user_id": 2, "username": "user2", "is_admin": 0 }
+  ]
 }
 ```
 
 ---
 
-## 💾 Data Structures
+### Action `10` — Remove From Chat
+
+**Request:**
+
+```json
+{
+  "action": 10,
+  "chat_id": 1,
+  "removed_by": 1,
+  "participant_ids": [3]
+}
+```
+
+**Response:**
+
+```json
+{ "response_code": 200, "response_text": "Removed 1 out of 1 participants from chat 1" }
+```
+
+---
+
+### Action `11` — Exit Chat
+
+**Request:**
+
+```json
+{
+  "action": 11,
+  "chat_id": 1,
+  "user_id": 3
+}
+```
+
+**Response:**
+
+```json
+{ "response_code": 200, "response_text": "User 3 exited chat 1 successfully" }
+```
+
+---
+
+## 📀 Data Structures
 
 ### `User`
 
@@ -274,6 +368,7 @@ typedef struct {
     char* email;
     char* hash_password;
     int id;
+    int is_admin;
 } User;
 ```
 
@@ -310,14 +405,16 @@ typedef struct {
 
 ## ❗ Error Handling
 
-All API responses include a `response_code` and `response_text`:
+All API responses include:
 
-| Code | Meaning          |
-| ---- | --------------   |
-| 200  | Success          |
-| 202  | Success but empty|
-| 400  | Bad request      |
-| 404  | Unknown action   |
+| Code | Meaning                |
+| ---- | ---------------------- |
+| 200  | Success                |
+| 202  | Success but empty      |
+| 400  | Bad request            |
+| 403  | Forbidden (e.g. perms) |
+| 404  | Unknown action         |
+| 500  | Internal server error  |
 
 ---
 

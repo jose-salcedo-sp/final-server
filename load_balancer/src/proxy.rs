@@ -22,8 +22,8 @@ pub struct Server {
 }
 
 pub enum ReverseProxy {
-    Fl(Arc<ReverseProxyFl>),
-    Ld(Arc<ReverseProxyLd>),
+    ClientLogic(ReverseProxyFl),
+    LogicData(ReverseProxyLd),
 }
 
 pub struct ReverseProxyFl {
@@ -50,7 +50,7 @@ pub struct ErrorMsg {
 }
 
 impl ReverseProxy {
-    pub fn from_config_file(path: &Path) -> Arc<Self> {
+    pub fn from_config_file(path: &Path) -> Self {
         let contents = fs::read_to_string(path).expect("Config file not found");
         let config: Config = serde_json::from_str(&contents).expect("Failed to parse config");
 
@@ -61,12 +61,12 @@ impl ReverseProxy {
                 logic_servers,
             } => {
                 let backend_servers = Self::parse_addr_pairs(&logic_servers);
-                return Arc::new(Self::Fl(Arc::new(ReverseProxyFl {
+                return Self::ClientLogic(ReverseProxyFl {
                     client_tcp_listening_addr,
                     logic_heartbeat_udp_addr,
                     logic_servers: Mutex::new(backend_servers),
                     next_index: AtomicUsize::new(0),
-                })));
+                });
             }
 
             Config::Ld {
@@ -79,7 +79,7 @@ impl ReverseProxy {
             } => {
                 let backend_servers = Self::parse_addr_pairs(&data_servers);
                 let frontend_servers = Self::parse_addr_pairs(&logic_servers);
-                return Arc::new(Self::Ld(Arc::new(ReverseProxyLd {
+                return Self::LogicData(ReverseProxyLd {
                     logic_servers_tcp_listening_addr,
                     data_servers_tcp_listening_addr,
                     data_servers_hearbeat_udp_addr,
@@ -87,8 +87,15 @@ impl ReverseProxy {
                     data_servers: Arc::new(Mutex::new(backend_servers)),
                     logic_servers: Arc::new(Mutex::new(frontend_servers)),
                     next_index: AtomicUsize::new(0),
-                })));
+                });
             }
+        }
+    }
+
+    pub async fn run(self) -> std::io::Result<()> {
+        match self {
+            ReverseProxy::ClientLogic(fl) => Arc::new(fl).run().await,
+            ReverseProxy::LogicData(ld) => Arc::new(ld).run().await,
         }
     }
 
@@ -124,7 +131,7 @@ impl ReverseProxyFl {
             let (mut client, addr) = listener.accept().await?;
             let proxy = self.clone();
             tokio::spawn(async move {
-                println!("ℹ FL Client {} connected", addr);
+                println!("ℹ️ FL Client {} connected", addr);
 
                 if let Some(backend_addr) = proxy.get_available_backend().await {
                     match TcpStream::connect(backend_addr).await {
@@ -231,7 +238,8 @@ impl ReverseProxyFl {
                                     {
                                         let _ = socket.send_to(b"OK", from).await;
                                         server.addr_identifier = Some(from);
-                                        println!("🫡 Received ID from {} — matched server {}, responded with OK", from, udp_addr);
+                                        server.is_up = true;
+                                        println!("ℹ️ Server identified with addr: {}", from);
                                     } else {
                                         println!(
                                             "❌ Address pair {} {} not recognized",
@@ -252,7 +260,7 @@ impl ReverseProxyFl {
                     }
 
                     _ => {
-                        println!("⚠ Unexpected message: \"{}\" from {}", message, from);
+                        println!("⚠️ Unexpected message: \"{}\" from {}", message, from);
                     }
                 }
             }
@@ -287,7 +295,6 @@ impl ReverseProxyFl {
             return None;
         }
         let index = self.next_index.fetch_add(1, Ordering::Relaxed) % available.len();
-        println!("available backend {:#?}", available[index]);
         Some(available[index].tcp_addr)
     }
 }
@@ -314,9 +321,8 @@ impl ReverseProxyLd {
                 let (mut frontend_stream, addr) = frontend_tcp_listener.accept().await.unwrap();
                 let proxy = proxy.clone();
                 tokio::spawn(async move {
-                    println!("📥 Frontend connection from {}", addr);
+                    println!("📥 Logic server connection from {}", addr);
                     if let Some(backend_addr) = proxy.get_available_backend().await {
-                        println!("Available backend at: {}", backend_addr);
                         match TcpStream::connect(backend_addr).await {
                             Ok(mut backend_stream) => {
                                 match tokio::io::copy_bidirectional(
@@ -367,9 +373,8 @@ impl ReverseProxyLd {
                 let (mut backend_stream, addr) = backend_tcp_listener.accept().await.unwrap();
                 let proxy = proxy.clone();
                 tokio::spawn(async move {
-                    println!("📥 Backend connection from {}", addr);
+                    println!("📥 Data server connection from {}", addr);
                     if let Some(frontend_addr) = proxy.get_available_frontend().await {
-                        println!("Available frontend at: {}", frontend_addr);
                         match TcpStream::connect(frontend_addr).await {
                             Ok(mut frontend_stream) => {
                                 match tokio::io::copy_bidirectional(
@@ -391,7 +396,8 @@ impl ReverseProxyLd {
                                     .write_all(
                                         &serde_json::to_vec(&ErrorMsg {
                                             response_code: 503,
-                                            response_text: "Failed to connect to frontend".to_string(),
+                                            response_text: "Failed to connect to frontend"
+                                                .to_string(),
                                         })
                                         .unwrap(),
                                     )
@@ -413,10 +419,9 @@ impl ReverseProxyLd {
             }
         });
 
-        // Wait for both to run forever
         let _ = tokio::try_join!(frontend_task, backend_task)?;
 
-        Ok(())
+        return Ok(());
     }
 
     async fn check_availability(self: Arc<Self>) {
@@ -426,7 +431,7 @@ impl ReverseProxyLd {
         let frontend_udp = frontend_clone.logic_servers_heartbeat_udp_addr;
 
         tokio::spawn(async move {
-            Self::listen_for_heartbeats(backend_clone.data_servers.clone(), backend_udp, "Backend")
+            Self::listen_for_heartbeats(backend_clone.data_servers.clone(), backend_udp, "Data")
                 .await;
         });
 
@@ -434,7 +439,7 @@ impl ReverseProxyLd {
             Self::listen_for_heartbeats(
                 frontend_clone.logic_servers.clone(),
                 frontend_udp,
-                "Frontend",
+                "Logic",
             )
             .await;
         });
@@ -493,7 +498,10 @@ impl ReverseProxyLd {
                                     {
                                         let _ = socket.send_to(b"OK", from).await;
                                         server.addr_identifier = Some(from);
-                                        println!("🫡 Received ID from {} — matched {} {}, responded with OK", from, role, udp_addr);
+                                        println!(
+                                            "ℹ️ {} server identified with addr: {}",
+                                            role, from
+                                        );
                                     } else {
                                         println!(
                                             "❌ Address pair {} {} not recognized",
@@ -514,7 +522,7 @@ impl ReverseProxyLd {
                     }
 
                     _ => {
-                        println!("⚠ Unexpected message: \"{}\" from {}", message, from);
+                        println!("⚠️ Unexpected message: \"{}\" from {}", message, from);
                     }
                 }
             }
@@ -529,7 +537,7 @@ impl ReverseProxyLd {
                     if let Some(last) = server.last_heartbeat {
                         if last.elapsed() > Duration::from_secs(1) {
                             if server.is_up {
-                                println!("⚠ Backend {} timed out", server.udp_addr);
+                                println!("⚠️ Backend {} timed out", server.udp_addr);
                             }
                             server.is_up = false;
                         }
@@ -543,7 +551,7 @@ impl ReverseProxyLd {
                     if let Some(last) = server.last_heartbeat {
                         if last.elapsed() > Duration::from_secs(1) {
                             if server.is_up {
-                                println!("⚠ Frontend {} timed out", server.udp_addr);
+                                println!("⚠️ Frontend {} timed out", server.udp_addr);
                             }
                             server.is_up = false;
                         }

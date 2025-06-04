@@ -2,15 +2,102 @@
 int sd;
 int udp_sd;
 
-const char *db_ips[LB_COUNT] = { "127.0.0.1"};
-const char *client_ips[LB_COUNT] = { "127.0.0.1"};
-int db_ports_udp[LB_COUNT]= {7070};
-int client_ports_udp[LB_COUNT]= {7071};
-int db_ports_tcp[LB_COUNT]= {6060};
-int client_ports_tcp[LB_COUNT]= {6061};
+const char *db_ips[LB_COUNT] = { "127.0.0.1" }; //IP db
+const char *client_ips[LB_COUNT] = { "127.0.0.1" }; //IP lb
+int db_ports_udp[LB_COUNT] = { 5001 };
+int client_ports_udp[LB_COUNT] = { 5000 };
+int db_ports_tcp[LB_COUNT]= { 3001 };
+int client_ports_tcp[LB_COUNT]= { 3000 };
 const char *string_tcp_addr = MAKE_ADDR(IP, TCP_PORT);
 const char *string_udp_addr = MAKE_ADDR(IP, UDP_PORT);
 static const char *HMAC_SECRET = "mi_secreto_super_fuerte";
+
+#define CESAR_SHIFT 1  // Desplazamiento fijo para el cifrado
+#define CESAR_MAGIC_HEADER "CESAR:"
+
+// Función para desencriptar usando cifrado César
+void cesar_decrypt(char *text) {
+    if (!text) return;
+    
+    for (int i = 0; text[i] != '\0'; i++) {
+        char c = text[i];
+        
+        // Solo procesar caracteres imprimibles ASCII (32-126)
+        if (c >= 32 && c <= 126) {
+            // Desplazar hacia atrás en el rango ASCII imprimible
+            int shifted = c - CESAR_SHIFT;
+            if (shifted < 32) {
+                shifted += 95; // 95 = rango de caracteres imprimibles (126-32+1)
+            }
+            text[i] = (char)shifted;
+        }
+        // Los demás caracteres no se modifican
+    }
+}
+
+// Función para encriptar usando cifrado César
+void cesar_encrypt(char *text) {
+    if (!text) return;
+    
+    for (int i = 0; text[i] != '\0'; i++) {
+        char c = text[i];
+        
+        // Solo procesar caracteres imprimibles ASCII (32-126)
+        if (c >= 32 && c <= 126) {
+            // Desplazar hacia adelante en el rango ASCII imprimible
+            int shifted = c + CESAR_SHIFT;
+            if (shifted > 126) {
+                shifted -= 95; // 95 = rango de caracteres imprimibles
+            }
+            text[i] = (char)shifted;
+        }
+        // Los demás caracteres no se modifican
+    }
+}
+
+// Función para verificar si un mensaje está cifrado con César
+bool is_cesar_encrypted(const char *message) {
+    if (!message) return false;
+    return strncmp(message, CESAR_MAGIC_HEADER, strlen(CESAR_MAGIC_HEADER)) == 0;
+}
+
+// Función para desencriptar mensaje completo si tiene el header César
+char* decrypt_cesar_message(const char *encrypted_message) {
+    if (!is_cesar_encrypted(encrypted_message)) {
+        // No está cifrado, devolver copia del original
+        return strdup(encrypted_message);
+    }
+    
+    // Saltar el header "CESAR:" y desencriptar el resto
+    const char *encrypted_part = encrypted_message + strlen(CESAR_MAGIC_HEADER);
+    char *decrypted = strdup(encrypted_part);
+    cesar_decrypt(decrypted);
+    
+    log_info("CESAR: Decrypted message from client");
+    return decrypted;
+}
+
+// Función para encriptar respuesta antes de enviarla al cliente
+char* encrypt_cesar_response(const char *response) {
+    if (!response) return NULL;
+    
+    // Crear buffer para header + mensaje encriptado
+    size_t header_len = strlen(CESAR_MAGIC_HEADER);
+    size_t response_len = strlen(response);
+    char *encrypted = malloc(header_len + response_len + 1);
+    
+    if (!encrypted) return NULL;
+    
+    // Copiar header
+    strcpy(encrypted, CESAR_MAGIC_HEADER);
+    
+    // Copiar y encriptar la respuesta
+    strcpy(encrypted + header_len, response);
+    cesar_encrypt(encrypted + header_len);
+    
+    log_info("CESAR: Encrypted response to client");
+    return encrypted;
+}
 
 const ErrorResponse ERROR_INVALID_JSON = {400, "Invalid JSON"};
 const ErrorResponse ERROR_MISSING_ACTION = {400, "Missing or invalid action"};
@@ -320,6 +407,8 @@ int connect_to_db_balancers(const char **hosts, const int *ports, int count) {
 }
 
 void handle_db_response(int client_sock, char* buffer, int bytes_received) {
+    char *final_response = NULL;
+    
     // Si es CREATE_USER y fue exitoso, inyectar token
     cJSON *json = cJSON_Parse(buffer);
     if (json) {
@@ -338,21 +427,44 @@ void handle_db_response(int client_sock, char* buffer, int bytes_received) {
                 
                 log_info("CREATE_USER successful: generated token for user_id=%d", user_id);
                 
-                char *modified = cJSON_PrintUnformatted(json);
-                send(client_sock, modified, strlen(modified), 0);
-                free(modified);
+                final_response = cJSON_PrintUnformatted(json);
                 free(jwt);
                 cJSON_Delete(json);
-                return;
             } else {
                 log_warn("CREATE_USER response missing user_id");
+                cJSON_Delete(json);
+                // Usar respuesta original
+                final_response = malloc(bytes_received + 1);
+                memcpy(final_response, buffer, bytes_received);
+                final_response[bytes_received] = '\0';
             }
+        } else {
+            cJSON_Delete(json);
+            // Usar respuesta original
+            final_response = malloc(bytes_received + 1);
+            memcpy(final_response, buffer, bytes_received);
+            final_response[bytes_received] = '\0';
         }
-        cJSON_Delete(json);
+    } else {
+        // No se pudo parsear, usar respuesta original
+        final_response = malloc(bytes_received + 1);
+        memcpy(final_response, buffer, bytes_received);
+        final_response[bytes_received] = '\0';
     }
-
-    // Si no es CREATE_USER exitoso o no se pudo parsear, reenviar tal como viene
-    send(client_sock, buffer, bytes_received, 0);
+    
+    // ===== CIFRADO CÉSAR: Encriptar respuesta antes de enviar =====
+    char *encrypted_response = encrypt_cesar_response(final_response);
+    if (encrypted_response) {
+        send(client_sock, encrypted_response, strlen(encrypted_response), 0);
+        log_info("CESAR: Sent encrypted response to client");
+        free(encrypted_response);
+    } else {
+        // Si falla la encriptación, enviar sin encriptar
+        send(client_sock, final_response, strlen(final_response), 0);
+        log_warn("CESAR: Failed to encrypt response, sent plain text");
+    }
+    
+    free(final_response);
 }
 
 void handle_client(int client_sock) {
@@ -363,7 +475,16 @@ void handle_client(int client_sock) {
     if (db_sock < 0) {
         log_err("Failed to connect to DB");
         char *error_response = create_error_response(ERROR_DB_UNAVAILABLE);
-        send(client_sock, error_response, strlen(error_response), 0);
+        
+        // Encriptar respuesta de error
+        char *encrypted_error = encrypt_cesar_response(error_response);
+        if (encrypted_error) {
+            send(client_sock, encrypted_error, strlen(encrypted_error), 0);
+            free(encrypted_error);
+        } else {
+            send(client_sock, error_response, strlen(error_response), 0);
+        }
+        
         free(error_response);
         close(client_sock);
         exit(1);
@@ -371,7 +492,7 @@ void handle_client(int client_sock) {
 
     // Configurar timeout de 15 segundos para el socket de DB
     struct timeval tv;
-    tv.tv_sec = 15;  // Timeout en segundos
+    tv.tv_sec = 15;
     tv.tv_usec = 0;
     setsockopt(db_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(db_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -398,22 +519,39 @@ void handle_client(int client_sock) {
             }
             buffer[bytes_received] = '\0';
 
-            log_info("Received JSON from client: %s", buffer);
+            log_info("Received from client: %s", buffer);
+
+            // CIFRADO CÉSAR: Desencriptar mensaje del cliente
+            char *decrypted_message = decrypt_cesar_message(buffer);
+            if (!decrypted_message) {
+                log_err("CESAR: Failed to decrypt client message");
+                break;
+            }
+
+            log_info("CESAR: Decrypted JSON: %s", decrypted_message);
 
             bool handled_locally = false;
-            char *response = process_client_request(buffer, db_sock, &handled_locally);
-        
+            char *response = process_client_request(decrypted_message, db_sock, &handled_locally);
+
             if (handled_locally) {
-                // Respuesta manejada localmente
-                send(client_sock, response, strlen(response), 0);
-                log_info("Sent local response to client: %s", response);
-                free(response);
+                // CIFRADO CÉSAR: Encriptar respuesta local
+                char *encrypted_response = encrypt_cesar_response(response);
+                if (encrypted_response) {
+                    send(client_sock, encrypted_response, strlen(encrypted_response), 0);
+                    log_info("CESAR: Sent encrypted local response to client");
+                    free(encrypted_response);
+                } else {
+                    send(client_sock, response, strlen(response), 0);
+                    log_warn("CESAR: Failed to encrypt local response, sent plain text");
+                }
             } else {
-                // Reenviar al backend
+                // Reenviar al backend (sin encriptar, comunicación interna)
                 write(db_sock, response, strlen(response));
                 log_info("Forwarded to DB: %s", response);
-                free(response);
             }
+
+            free(response);
+            free(decrypted_message);
         }
 
         // Datos del backend
@@ -423,7 +561,16 @@ void handle_client(int client_sock) {
                 if (errno == EWOULDBLOCK || errno == EAGAIN) {
                     log_warn("DB response timeout");
                     char *error_response = create_error_response(ERROR_DB_UNAVAILABLE);
-                    send(client_sock, error_response, strlen(error_response), 0);
+                    
+                    // CIFRADO CÉSAR: Encriptar error de timeout
+                    char *encrypted_error = encrypt_cesar_response(error_response);
+                    if (encrypted_error) {
+                        send(client_sock, encrypted_error, strlen(encrypted_error), 0);
+                        free(encrypted_error);
+                    } else {
+                        send(client_sock, error_response, strlen(error_response), 0);
+                    }
+                    
                     free(error_response);
                 } else {
                     log_warn("DB connection lost");
@@ -434,7 +581,7 @@ void handle_client(int client_sock) {
 
             log_info("Received response from DB: %s", buffer);
 
-            // Manejar respuesta del DB (especialmente CREATE_USER)
+            // Manejar respuesta del DB (incluye encriptación automática)
             handle_db_response(client_sock, buffer, bytes_received);
         }
     }

@@ -24,7 +24,7 @@
 
 #define BUFFER_SIZE 4096
 #define UUIDv7_SIZE 32
-#define IP "127.0.0.1"
+#define IP "127.0.1.1" //IP Server
 #define TCP_PORT 8080
 #define UDP_PORT 9090
 #define LB_COUNT 1

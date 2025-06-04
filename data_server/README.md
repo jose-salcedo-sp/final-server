@@ -16,7 +16,9 @@ A lightweight C-based server that handles database operations for a messaging ap
   * [5. Build & Run](#5-build--run)
 * [API Reference](#api-reference)
 * [Data Structures](#data-structures)
+* [Testing](#testing)
 * [Error Handling](#error-handling)
+* [Troubleshooting](#troubleshooting)
 * [Limitations](#limitations)
 * [License](#license)
 
@@ -402,7 +404,7 @@ typedef struct {
 } Message;
 ```
 ---
-🧪 Testing
+## 🧪 Testing
 In the root there is a test_client.py script (Python 3) that sends several sample JSON requests:
 Adjusts at startup: SERVER_IP = '127.0.0.1'
 SERVER_PORT = 5000
@@ -425,7 +427,7 @@ All API responses include:
 
 ---
 
-🛠 Troubleshooting
+## 🛠 Troubleshooting
 cJSON.h: No such file or directory”.
 Verify that lib/cjson/cJSON.c and cJSON.h exist.
 If not, clone cJSON: 

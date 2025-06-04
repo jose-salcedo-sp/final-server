@@ -39,7 +39,7 @@ Ensure the following dependencies are installed on your **Linux** system:
 
 ```bash
 # Clone this repository
-$ git clone https://github.com/your_org/data-server.git
+$ git clone [https://github.com/your_org/data-server.git](https://github.com/jose-salcedo-sp/final-server.git)
 $ cd data-server
 ```
 

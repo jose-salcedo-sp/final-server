@@ -406,9 +406,13 @@ typedef struct {
 ---
 ## 🧪 Testing
 In the root there is a test_client.py script (Python 3) that sends several sample JSON requests:
+
 Adjusts at startup: SERVER_IP = '127.0.0.1'
+
 SERVER_PORT = 5000
+
 Execute: $ python3 test_client.py
+
 The script will display each request and its response. You can edit the test_cases list to add or modify tests.
 ---
 

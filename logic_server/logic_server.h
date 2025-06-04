@@ -47,7 +47,6 @@ typedef char UUID[UUIDv7_SIZE];
 
 typedef enum {
   	VALIDATE_USER = 0,
-	GET_USER_AUTH_DATA = 1, 
   	CREATE_USER = 2, 
   	GET_USER_INFO = 3, 
   	CREATE_CHAT = 4, 

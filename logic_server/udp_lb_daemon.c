@@ -2,7 +2,7 @@
 
 #include "logic_server.h"
 
-#define MESSAGE_INTERVAL 5  // seconds between messages
+#define MESSAGE_INTERVAL 1  // seconds between messages
 
 UdpLoadBalancer db_lbs[LB_COUNT];
 UdpLoadBalancer client_lbs[LB_COUNT];
@@ -98,10 +98,10 @@ void udp_lb_daemon() {
                     if (memcmp(&from, &lb[j]->addr, sizeof(from)) == 0) {
 						log_info("PAIRED IP");
 						//For test case we are adding \n
-                        if (strcmp(buf, "OK\n") == 0) {
+                        if (strcmp(buf, "OK") == 0) {
                             lb[j]->state = SENDING_OK;
 						//For test case we are adding \n
-                        } else if (strcmp(buf, "AUTH\n") == 0) {
+                        } else if (strcmp(buf, "AUTH") == 0) {
                             lb[j]->state = SENDING_ADDRESS;
                         } else{
 							log_info("NOT VALID ACTION");

@@ -2,12 +2,12 @@
 int sd;
 int udp_sd;
 
-const char *db_ips[LB_COUNT] = { "127.0.0.1"};
-const char *client_ips[LB_COUNT] = { "127.0.0.1"};
-int db_ports_udp[LB_COUNT]= {7070};
-int client_ports_udp[LB_COUNT]= {7071};
-int db_ports_tcp[LB_COUNT]= {6060};
-int client_ports_tcp[LB_COUNT]= {6061};
+const char *db_ips[LB_COUNT] = { "10.7.28.253"};
+const char *client_ips[LB_COUNT] = { "10.7.28.253"};
+int db_ports_udp[LB_COUNT]= {5001};
+int client_ports_udp[LB_COUNT]= {5000};
+int db_ports_tcp[LB_COUNT]= {3001};
+int client_ports_tcp[LB_COUNT]= {3000}; 
 const char *string_tcp_addr = MAKE_ADDR(IP, TCP_PORT);
 const char *string_udp_addr = MAKE_ADDR(IP, UDP_PORT);
 static const char *HMAC_SECRET = "mi_secreto_super_fuerte";
@@ -116,16 +116,27 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
                 *handled_locally = true;
                 
                 // 1. Extraer credenciales del cliente
-                cJSON *username = cJSON_GetObjectItem(json, "key");
+                cJSON *user_key = cJSON_GetObjectItem(json, "key");
                 cJSON *password = cJSON_GetObjectItem(json, "password");
+
+                if (user_key) {
+                    log_info("user_key found: %s", user_key->valuestring);
+                } else {
+                    log_info("user_key is NULL!");
+                }
+                
+                log_info("Client credentials - Username: %s, Password: %s", 
+                        user_key ? user_key->valuestring : "NULL",  
+                        password ? password->valuestring : "NULL");
                 
                 // 2. Crear consulta para obtener datos de autenticación
                 cJSON *db_query = cJSON_CreateObject();
-                cJSON_AddNumberToObject(db_query, "action", GET_USER_AUTH_DATA);
-                cJSON_AddStringToObject(db_query, "username", username->valuestring);
+                cJSON_AddNumberToObject(db_query, "action", 0);
+                cJSON_AddStringToObject(db_query, "key", user_key->valuestring);
                 
                 // 3. Enviar consulta al backend
                 char *db_request = cJSON_PrintUnformatted(db_query);
+                log_info("Sending to DB: %s", db_request);
                 write(backend_fd, db_request, strlen(db_request));
                 free(db_request);
                 cJSON_Delete(db_query);
@@ -134,39 +145,56 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
                 char db_response[BUFFER_SIZE];
                 int len = read(backend_fd, db_response, BUFFER_SIZE - 1);
                 if (len <= 0) {
+                    log_err("Failed to read from DB, length: %d", len);
                     cJSON_Delete(json);
                     return create_error_response(ERROR_DB_CONNECTION);
                 }
                 db_response[len] = '\0';
                 
+                log_info("Received from DB: %s", db_response);
+                
                 // 5. Parsear respuesta de la DB
                 cJSON *db_json = cJSON_Parse(db_response);
                 if (!db_json) {
+                    log_err("Failed to parse DB response");
                     cJSON_Delete(json);
                     return create_error_response(ERROR_INVALID_DB_RESPONSE);
                 }
                 
-                // Verificar si el usuario existe
-                cJSON *db_password = cJSON_GetObjectItem(db_json, "password");
-                cJSON *db_user_id = cJSON_GetObjectItem(db_json, "id");
-                if (!db_password || !cJSON_IsString(db_password) || !db_user_id || !cJSON_IsNumber(db_user_id)) {
+                // Verificar si el usuario existe (solo necesitamos password_hash)
+                cJSON *db_password = cJSON_GetObjectItem(db_json, "password_hash");
+                cJSON *response_code = cJSON_GetObjectItem(db_json, "response_code");
+                
+                log_info("DB fields check - password_hash exists: %s", 
+                        db_password ? "YES" : "NO");
+                
+                if (db_password && cJSON_IsString(db_password)) {
+                    log_info("Password from DB: %s", db_password->valuestring);
+                }
+                
+                // Verificar que la respuesta sea exitosa y que exista la contraseña
+                if (!db_password || !cJSON_IsString(db_password) || 
+                    !response_code || response_code->valueint != 200) {
+                    log_warn("Missing password or error response for user %s", user_key->valuestring);
                     cJSON_Delete(db_json);
                     cJSON_Delete(json);
                     return create_error_response(ERROR_INVALID_CREDENTIALS);
                 }
                 
                 // 6. Validar contraseña
+                log_info("Comparing passwords - Client: '%s' vs DB: '%s'", 
+                        password->valuestring, db_password->valuestring);
+                
                 if (strcmp(password->valuestring, db_password->valuestring) == 0) {
-                    // Contraseña correcta - generar token
-                    int user_id = db_user_id->valueint;
-                    char *token = create_token(user_id);
+                    // Contraseña correcta - generar token (usando username como user_id temporal)
+                    char *token = create_token(1); // O usa un hash del username si necesitas un ID único
                     
-                    // Crear respuesta con token y user_id
+                    // Crear respuesta con token
                     cJSON *response = cJSON_CreateObject();
-                    cJSON_AddStringToObject(response, "status", "ok");
+                    cJSON_AddNumberToObject(response, "response_code", 200);
+                    cJSON_AddStringToObject(response, "response_text", "Authentication successful");
                     cJSON_AddStringToObject(response, "token", token);
-                    cJSON_AddNumberToObject(response, "user_id", user_id);
-                    
+                                
                     char *response_str = cJSON_PrintUnformatted(response);
                     
                     // Limpiar memoria
@@ -175,11 +203,11 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
                     cJSON_Delete(response);
                     free(token);
                     
-                    log_info("User %s authenticated successfully with ID %d", username->valuestring, user_id);
+                    log_info("User %s authenticated successfully", user_key->valuestring);
                     return response_str;
                 } else {
                     // Contraseña incorrecta
-                    log_warn("Invalid password for user %s", username->valuestring);
+                    log_warn("Password mismatch for user %s", user_key->valuestring);
                     cJSON_Delete(db_json);
                     cJSON_Delete(json);
                     return create_error_response(ERROR_INVALID_CREDENTIALS);
@@ -225,11 +253,10 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
         
         switch (action) {
             case GET_USER_INFO:
-                // Para GET_USER_INFO, inyectar como "user_id" (si no viene ya)
-                if (!cJSON_HasObjectItem(json, "user_id")) {
-                    cJSON_AddNumberToObject(json, "user_id", user_id);
-                }
-                log_info("GET_USER_INFO: injected user_id=%d", user_id);
+                // GET_USER_INFO no necesita user_id según la documentación
+                // Solo requiere "key": "username_or_email"
+                // No inyectamos nada
+                log_info("GET_USER_INFO: no injection needed");
                 break;
                 
             case CREATE_CHAT:
@@ -257,9 +284,11 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
                 break;
                 
             case GET_CHAT_MESSAGES:
-                // Para GET_CHAT_MESSAGES, inyectar como "user_id"
-                cJSON_ReplaceItemInObject(json, "user_id", cJSON_CreateNumber(user_id));
-                log_info("GET_CHAT_MESSAGES: injected user_id=%d", user_id);
+                // GET_CHAT_MESSAGES no necesita user_id según la documentación
+                // Solo requiere "chat_id" y opcionalmente "last_update_timestamp"
+                // Pero podríamos inyectar user_id para validación de permisos en el backend
+                cJSON_AddNumberToObject(json, "user_id", user_id);
+                log_info("GET_CHAT_MESSAGES: injected user_id=%d for permission validation", user_id);
                 break;
                 
             default:

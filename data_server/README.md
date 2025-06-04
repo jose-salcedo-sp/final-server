@@ -57,7 +57,7 @@ mysql> FLUSH PRIVILEGES;
 ```
 
 Create the tables by running the SQL schema (see schema in next section or in `schema.sql` file).
-Execute $ mysql -u db_admin -p messengerdatabase < schema.sql
+Execute $ mysql -u db_admin -p messengerdatabase < schema.sql to load everything at once.
 
 ### 3. Environment Configuration
 

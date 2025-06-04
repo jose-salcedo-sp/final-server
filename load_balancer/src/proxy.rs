@@ -236,10 +236,10 @@ impl ReverseProxyFl {
                                         .iter_mut()
                                         .find(|s| s.udp_addr == udp_addr && s.tcp_addr == tcp_addr)
                                     {
-                                        let _ = socket.send_to(b"OK", from).await;
                                         server.addr_identifier = Some(from);
                                         server.is_up = true;
                                         println!("ℹ️ Server identified with addr: {}", from);
+                                        let _ = socket.send_to(b"OK", from).await;
                                     } else {
                                         println!(
                                             "❌ Address pair {} {} not recognized",
@@ -269,22 +269,21 @@ impl ReverseProxyFl {
 
     async fn check_heartbeat_expiry(self_: Arc<Self>) {
         loop {
-            {
-                let mut backends = self_.logic_servers.lock().await;
-                for backend in backends.iter_mut() {
-                    if let Some(last) = backend.last_heartbeat {
-                        if last.elapsed() > Duration::from_secs(1) {
-                            if backend.is_up {
-                                println!("⚠ Backend {} timed out", backend.udp_addr);
-                            }
-                            backend.is_up = false;
+            let mut backends = self_.logic_servers.lock().await;
+            for backend in backends.iter_mut() {
+                if let Some(last) = backend.last_heartbeat {
+                    if last.elapsed() > Duration::from_secs(1) {
+                        if backend.is_up {
+                            println!("⚠️ Backend {} timed out", backend.udp_addr);
                         }
-                    } else {
                         backend.is_up = false;
                     }
+                } else {
+                    backend.is_up = false;
                 }
             }
-            tokio::time::sleep(Duration::from_millis(2000)).await;
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 
@@ -307,11 +306,11 @@ impl ReverseProxyLd {
             TcpListener::bind(self.logic_servers_tcp_listening_addr).await?;
         let backend_tcp_listener = TcpListener::bind(self.data_servers_tcp_listening_addr).await?;
         println!(
-            "🔌 Frontend TCP listening on {}",
+            "🔌 Logic TCP listening on {}",
             self.logic_servers_tcp_listening_addr
         );
         println!(
-            "🔌 Backend TCP listening on {}",
+            "🔌 Data TCP listening on {}",
             self.data_servers_tcp_listening_addr
         );
 
@@ -531,36 +530,34 @@ impl ReverseProxyLd {
 
     async fn check_heartbeat_expiry(self_: Arc<Self>) {
         loop {
-            {
-                let mut backends = self_.data_servers.lock().await;
-                for server in backends.iter_mut() {
-                    if let Some(last) = server.last_heartbeat {
-                        if last.elapsed() > Duration::from_secs(1) {
-                            if server.is_up {
-                                println!("⚠️ Backend {} timed out", server.udp_addr);
-                            }
-                            server.is_up = false;
+            let mut backends = self_.data_servers.lock().await;
+            for server in backends.iter_mut() {
+                if let Some(last) = server.last_heartbeat {
+                    if last.elapsed() > Duration::from_secs(1) {
+                        if server.is_up {
+                            println!("⚠️ Data server {} timed out", server.udp_addr);
                         }
-                    } else {
                         server.is_up = false;
                     }
-                }
-
-                let mut frontends = self_.logic_servers.lock().await;
-                for server in frontends.iter_mut() {
-                    if let Some(last) = server.last_heartbeat {
-                        if last.elapsed() > Duration::from_secs(1) {
-                            if server.is_up {
-                                println!("⚠️ Frontend {} timed out", server.udp_addr);
-                            }
-                            server.is_up = false;
-                        }
-                    } else {
-                        server.is_up = false;
-                    }
+                } else {
+                    server.is_up = false;
                 }
             }
-            tokio::time::sleep(Duration::from_millis(2000)).await;
+
+            let mut frontends = self_.logic_servers.lock().await;
+            for server in frontends.iter_mut() {
+                if let Some(last) = server.last_heartbeat {
+                    if last.elapsed() > Duration::from_secs(1) {
+                        if server.is_up {
+                            println!("⚠️ Logic server {} timed out", server.udp_addr);
+                        }
+                        server.is_up = false;
+                    }
+                } else {
+                    server.is_up = false;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 

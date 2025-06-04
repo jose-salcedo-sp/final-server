@@ -3,12 +3,11 @@
     "logic_servers_tcp_listening_addr": "0.0.0.0:3001",
     "logic_servers_heartbeat_udp_addr": "0.0.0.0:5001",
     "logic_servers": [
-        "10.7.12.218:8080 10.7.12.218:9090"
+        "10.7.29.101:8080 10.7.29.101:9090"
     ],
     "data_servers_tcp_listening_addr": "0.0.0.0:3002",
     "data_servers_hearbeat_udp_addr": "0.0.0.0:5002",
     "data_servers": [
-        "10.7.14.124:5000 10.7.14.124:5001",
-        "0.0.0.0:8000 0.0.0.0:8001"
+        "10.7.10.47:5000 10.7.10.47:5001"
     ]
 }

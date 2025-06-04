@@ -414,6 +414,7 @@ SERVER_PORT = 5000
 Execute: $ python3 test_client.py
 
 The script will display each request and its response. You can edit the test_cases list to add or modify tests.
+
 ---
 
 ## ❗ Error Handling
@@ -436,6 +437,7 @@ cJSON.h: No such file or directory”.
 Verify that lib/cjson/cJSON.c and cJSON.h exist.
 If not, clone cJSON: 
 $ git clone https://github.com/DaveGamble/cJSON.git lib/cjson
+
 Connection refused” when connecting MySQL
 Make sure the MySQL server is running (systemctl status mysql or sudo service mysql status).
 Verify that the credentials in .env match the user created in MySQL.

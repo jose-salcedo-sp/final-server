@@ -192,6 +192,14 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
 
             case CREATE_USER: {
                 *handled_locally = false;
+
+                if (current_request.request_json) {
+                    cJSON_Delete(current_request.request_json);
+                }
+                
+                // Store current request
+                current_request.action = CREATE_USER;
+                current_request.request_json = cJSON_Duplicate(json, 1);
                 char *out = cJSON_PrintUnformatted(json);
                 cJSON_Delete(json);
                 return out;
@@ -231,29 +239,64 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
                 // GET_USER_INFO no necesita user_id según la documentación
                 // Solo requiere "key": "username_or_email"
                 // No inyectamos nada
+                if (current_request.request_json) {
+                    cJSON_Delete(current_request.request_json);
+                }
+                
+                // Store current request
+                current_request.action = GET_USER_INFO;
+                current_request.request_json = cJSON_Duplicate(json, 1);
                 log_info("GET_USER_INFO: no injection needed");
                 break;
                 
             case CREATE_CHAT:
                 // Para CREATE_CHAT, inyectar como "created_by"
+                if (current_request.request_json) {
+                    cJSON_Delete(current_request.request_json);
+                }
+                
+                // Store current request
+                current_request.action = CREATE_CHAT;
+                current_request.request_json = cJSON_Duplicate(json, 1);
                 cJSON_ReplaceItemInObject(json, "created_by", cJSON_CreateNumber(user_id));
                 log_info("CREATE_CHAT: injected created_by=%d", user_id);
                 break;
                 
             case ADD_TO_GROUP_CHAT:
                 // Para ADD_TO_GROUP_CHAT, inyectar como "added_by"
+                if (current_request.request_json) {
+                    cJSON_Delete(current_request.request_json);
+                }
+                
+                // Store current request
+                current_request.action = ADD_TO_GROUP_CHAT;
+                current_request.request_json = cJSON_Duplicate(json, 1);
                 cJSON_ReplaceItemInObject(json, "added_by", cJSON_CreateNumber(user_id));
                 log_info("ADD_TO_GROUP_CHAT: injected added_by=%d", user_id);
                 break;
                 
             case SEND_MESSAGE:
                 // Para SEND_MESSAGE, inyectar como "sender_id"
+                if (current_request.request_json) {
+                    cJSON_Delete(current_request.request_json);
+                }
+                
+                // Store current request
+                current_request.action = SEND_MESSAGE;
+                current_request.request_json = cJSON_Duplicate(json, 1);
                 cJSON_ReplaceItemInObject(json, "sender_id", cJSON_CreateNumber(user_id));
                 log_info("SEND_MESSAGE: injected sender_id=%d", user_id);
                 break;
                 
             case GET_CHATS:
                 // Para GET_CHATS, inyectar como "user_id"
+                if (current_request.request_json) {
+                    cJSON_Delete(current_request.request_json);
+                }
+                
+                // Store current request
+                current_request.action = GET_CHATS;
+                current_request.request_json = cJSON_Duplicate(json, 1);
                 cJSON_ReplaceItemInObject(json, "user_id", cJSON_CreateNumber(user_id));
                 log_info("GET_CHATS: injected user_id=%d", user_id);// Handle NULL timestamp case
 				cJSON *timestampChats = cJSON_GetObjectItem(json, "last_update_timestamp");
@@ -270,6 +313,13 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
                 // GET_CHAT_MESSAGES no necesita user_id según la documentación
                 // Solo requiere "chat_id" y opcionalmente "last_update_timestamp"
                 // Pero podríamos inyectar user_id para validación de permisos en el backend
+                if (current_request.request_json) {
+                    cJSON_Delete(current_request.request_json);
+                }
+                
+                // Store current request
+                current_request.action = GET_CHAT_MESSAGES;
+                current_request.request_json = cJSON_Duplicate(json, 1);
                 cJSON_AddNumberToObject(json, "user_id", user_id);
                 log_info("GET_CHAT_MESSAGES: injected user_id=%d for permission validation", user_id);
 				cJSON *timestampMessages = cJSON_GetObjectItem(json, "last_update_timestamp");
@@ -283,12 +333,33 @@ char* process_client_request(const char *raw_json, int backend_fd, bool *handled
                 break;
                 
             case GET_CHAT_INFO:
+                if (current_request.request_json) {
+                    cJSON_Delete(current_request.request_json);
+                }
+                
+                // Store current request
+                current_request.action = GET_CHAT_INFO;
+                current_request.request_json = cJSON_Duplicate(json, 1);
                 break;
 			case REMOVE_FROM_CHAT:
+                if (current_request.request_json) {
+                    cJSON_Delete(current_request.request_json);
+                }
+                
+                // Store current request
+                current_request.action = REMOVE_FROM_CHAT;
+                current_request.request_json = cJSON_Duplicate(json, 1);
                 cJSON_AddNumberToObject(json, "removed_by", user_id);
                 log_info("GET_CHAT_MESSAGES: injected user_id=%d for permission validation", user_id);
                 break;
 			case EXIT_CHAT:
+                if (current_request.request_json) {
+                    cJSON_Delete(current_request.request_json);
+                }
+                
+                // Store current request
+                current_request.action = EXIT_CHAT;
+                current_request.request_json = cJSON_Duplicate(json, 1);
                 cJSON_AddNumberToObject(json, "user_id", user_id);
                 log_info("GET_CHAT_MESSAGES: injected user_id=%d for permission validation", user_id);
                 break;

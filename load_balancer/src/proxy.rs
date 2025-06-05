@@ -12,6 +12,8 @@ use tokio::sync::Mutex;
 
 use crate::config::Config;
 
+const TIMEOUT: u64 = 2;
+
 #[derive(Debug, Clone)]
 pub struct Server {
     pub addr_identifier: Option<SocketAddr>,
@@ -167,6 +169,7 @@ impl ReverseProxyFl {
                         }
                     }
                 } else {
+                    eprintln!("❌ No backend available");
                     let _ = client
                         .write_all(
                             &serde_json::to_vec(&ErrorMsg {
@@ -272,14 +275,12 @@ impl ReverseProxyFl {
             let mut backends = self_.logic_servers.lock().await;
             for backend in backends.iter_mut() {
                 if let Some(last) = backend.last_heartbeat {
-                    if last.elapsed() > Duration::from_secs(1) {
+                    if last.elapsed() > Duration::from_secs(TIMEOUT) {
                         if backend.is_up {
                             println!("⚠️ Backend {} timed out", backend.udp_addr);
                         }
                         backend.is_up = false;
                     }
-                } else {
-                    backend.is_up = false;
                 }
             }
 
@@ -338,7 +339,9 @@ impl ReverseProxyLd {
                                     }
                                 }
                             }
-                            Err(_) => {
+                            Err(e) => {
+                                eprintln!("❌ Could not connect to backend {}: {}", backend_addr, e);
+
                                 let _ = frontend_stream
                                     .write_all(
                                         &serde_json::to_vec(&ErrorMsg {
@@ -352,6 +355,7 @@ impl ReverseProxyLd {
                             }
                         }
                     } else {
+                        eprintln!("❌ No backend available");
                         let _ = frontend_stream
                             .write_all(
                                 &serde_json::to_vec(&ErrorMsg {
@@ -533,28 +537,24 @@ impl ReverseProxyLd {
             let mut backends = self_.data_servers.lock().await;
             for server in backends.iter_mut() {
                 if let Some(last) = server.last_heartbeat {
-                    if last.elapsed() > Duration::from_secs(1) {
+                    if last.elapsed() > Duration::from_secs(TIMEOUT) {
                         if server.is_up {
                             println!("⚠️ Data server {} timed out", server.udp_addr);
                         }
                         server.is_up = false;
                     }
-                } else {
-                    server.is_up = false;
                 }
             }
 
             let mut frontends = self_.logic_servers.lock().await;
             for server in frontends.iter_mut() {
                 if let Some(last) = server.last_heartbeat {
-                    if last.elapsed() > Duration::from_secs(1) {
+                    if last.elapsed() > Duration::from_secs(TIMEOUT) {
                         if server.is_up {
                             println!("⚠️ Logic server {} timed out", server.udp_addr);
                         }
                         server.is_up = false;
                     }
-                } else {
-                    server.is_up = false;
                 }
             }
             tokio::time::sleep(Duration::from_secs(1)).await;

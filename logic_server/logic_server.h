@@ -21,15 +21,16 @@
 #include <jwt.h>
 
 
-
 #define BUFFER_SIZE 4096
 #define UUIDv7_SIZE 32
-#define IP "127.0.0.1"
+#define IP "10.7.14.51"
 #define TCP_PORT 8080
 #define UDP_PORT 9090
 #define LB_COUNT 1
 #define TIMEOUT 2
 #define MAX_PENDING_REQUESTS 100
+#define CESAR_SHIFT 3 
+
 
 #define STRINGIFY(x) #x
 #define MAKE_ADDR(ip, port) ip ":" STRINGIFY(port) 

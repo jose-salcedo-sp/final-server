@@ -2,8 +2,8 @@
 int sd;
 int udp_sd;
 
-const char *db_ips[LB_COUNT] = { "127.0.0.1"};
-const char *client_ips[LB_COUNT] = { "127.0.0.1"};
+const char *db_ips[LB_COUNT] = { "10.7.11.159"};
+const char *client_ips[LB_COUNT] = { "10.7.11.159"};
 int db_ports_udp[LB_COUNT]= {5001};
 int client_ports_udp[LB_COUNT]= {5000};
 int db_ports_tcp[LB_COUNT]= {3001};
@@ -57,6 +57,54 @@ char* create_error_response(ErrorResponse error) {
     char *result = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
     return result;
+}
+
+// Function to decrypt using Cesar cipher
+void cesar_decrypt(char *text) {
+    if (!text) return;
+    
+    for (int i = 0; text[i] != '\0'; i++) {
+        char c = text[i];
+        
+        // Only process printable ASCII characters (32-126)
+        if (c >= 32 && c <= 126) {
+            // Shift backward in the printable ASCII range
+            int shifted = c - CESAR_SHIFT;
+            if (shifted < 32) {
+                shifted += 95; // 95 = range of printable characters (126-32+1)
+            }
+            text[i] = (char)shifted;
+        }
+        // Other characters remain unchanged
+    }
+}
+
+// Function to encrypt using Cesar cipher
+void cesar_encrypt(char *text) {
+    if (!text) return;
+    
+    for (int i = 0; text[i] != '\0'; i++) {
+        char c = text[i];
+        
+        // Only process printable ASCII characters (32-126)
+        if (c >= 32 && c <= 126) {
+            // Shift forward in the printable ASCII range
+            int shifted = c + CESAR_SHIFT;
+            if (shifted > 126) {
+                shifted -= 95; // 95 = range of printable characters
+            }
+            text[i] = (char)shifted;
+        }
+        // Other characters remain unchanged
+    }
+}
+
+// Helper function to encrypt and send response
+void send_encrypted_response(int sock, const char *response) {
+    char *encrypted = strdup(response);
+    cesar_encrypt(encrypted);
+    send(sock, encrypted, strlen(encrypted), 0);
+    free(encrypted);
 }
 
 bool validate_request(ACTIONS action, cJSON *json) {
@@ -306,7 +354,7 @@ void handle_db_response(int client_sock, char* buffer, int bytes_received, struc
     if (!db_json) {
         log_warn("Failed to parse DB response");
         char *error_response = create_error_response(ERROR_DB_CONNECTION);
-        send(client_sock, error_response, strlen(error_response), 0);
+		send_encrypted_response(client_sock, error_response);
         free(error_response);
         return;
     }
@@ -319,7 +367,7 @@ void handle_db_response(int client_sock, char* buffer, int bytes_received, struc
     if (!current_request.request_json) {
         log_warn("No current request found for DB response");
         char *error_response = create_error_response(ERROR_DB_CONNECTION);
-        send(client_sock, error_response, strlen(error_response), 0);
+		send_encrypted_response(client_sock, error_response);
         free(error_response);
         cJSON_Delete(db_json);
         return;
@@ -338,7 +386,7 @@ void handle_db_response(int client_sock, char* buffer, int bytes_received, struc
                     !client_password || !cJSON_IsString(client_password)) {
                     log_warn("Authentication failed");
                     char *error_response = create_error_response(ERROR_INVALID_CREDENTIALS);
-                    send(client_sock, error_response, strlen(error_response), 0);
+					send_encrypted_response(client_sock, error_response);
                     free(error_response);
                     break;
                 }
@@ -346,7 +394,7 @@ void handle_db_response(int client_sock, char* buffer, int bytes_received, struc
                 if (strcmp(client_password->valuestring, db_password->valuestring) != 0) {
                     log_warn("Password mismatch");
                     char *error_response = create_error_response(ERROR_INVALID_CREDENTIALS);
-                    send(client_sock, error_response, strlen(error_response), 0);
+					send_encrypted_response(client_sock, error_response);
                     free(error_response);
                     break;
                 }
@@ -368,7 +416,7 @@ void handle_db_response(int client_sock, char* buffer, int bytes_received, struc
                 if (new_db_sock < 0) {
                     log_err("Failed to connect to DB for user info");
                     char *error_response = create_error_response(ERROR_DB_UNAVAILABLE);
-                    send(client_sock, error_response, strlen(error_response), 0);
+					send_encrypted_response(client_sock, error_response);
                     free(error_response);
                     break;
                 }
@@ -398,7 +446,7 @@ void handle_db_response(int client_sock, char* buffer, int bytes_received, struc
                 if (!is_success) {
                     log_warn("Failed to get user info");
                     char *error_response = create_error_response(ERROR_INVALID_CREDENTIALS);
-                    send(client_sock, error_response, strlen(error_response), 0);
+					send_encrypted_response(client_sock, error_response);
                     free(error_response);
                     break;
                 }
@@ -407,7 +455,7 @@ void handle_db_response(int client_sock, char* buffer, int bytes_received, struc
                 if (!user_id_json || !cJSON_IsNumber(user_id_json)) {
                     log_warn("User info response missing user_id");
                     char *error_response = create_error_response(ERROR_INVALID_CREDENTIALS);
-                    send(client_sock, error_response, strlen(error_response), 0);
+					send_encrypted_response(client_sock, error_response);
                     free(error_response);
                     break;
                 }
@@ -423,7 +471,7 @@ void handle_db_response(int client_sock, char* buffer, int bytes_received, struc
                 cJSON_AddNumberToObject(response, "user_id", user_id);
 
                 char *response_str = cJSON_PrintUnformatted(response);
-                send(client_sock, response_str, strlen(response_str), 0);
+				send_encrypted_response(client_sock, response_str);
                 
                 free(token);
                 free(response_str);
@@ -449,7 +497,7 @@ void handle_db_response(int client_sock, char* buffer, int bytes_received, struc
     } else {
         // For all other actions, just forward the response as-is
         char *modified = cJSON_PrintUnformatted(db_json);
-        send(client_sock, modified, strlen(modified), 0);
+		send_encrypted_response(client_sock, modified);
         free(modified);
     }
     
@@ -465,7 +513,7 @@ void handle_client(int client_sock) {
     if (current_request.current_db_sock < 0) {
         log_err("Failed to connect to DB");
         char *error_response = create_error_response(ERROR_DB_UNAVAILABLE);
-        send(client_sock, error_response, strlen(error_response), 0);
+		send_encrypted_response(client_sock, error_response);
         free(error_response);
         close(client_sock);
         exit(1);
@@ -499,6 +547,8 @@ void handle_client(int client_sock) {
                 break;
             }
             buffer[bytes_received] = '\0';
+			
+			cesar_decrypt(buffer);
 
             log_info("Received JSON from client: %s", buffer);
 
@@ -507,7 +557,7 @@ void handle_client(int client_sock) {
         
             if (handled_locally) {
                 // Respuesta manejada localmente
-                send(client_sock, response, strlen(response), 0);
+				send_encrypted_response(client_sock, response);
                 log_info("Sent local response to client: %s", response);
                 free(response);
             } else {
@@ -525,7 +575,7 @@ void handle_client(int client_sock) {
                 if (errno == EWOULDBLOCK || errno == EAGAIN) {
                     log_warn("DB response timeout");
                     char *error_response = create_error_response(ERROR_DB_UNAVAILABLE);
-                    send(client_sock, error_response, strlen(error_response), 0);
+					send_encrypted_response(client_sock, error_response);
                     free(error_response);
                 } else {
                     log_warn("DB connection lost");
@@ -649,7 +699,7 @@ int main() {
     pid = fork();
     if (pid == 0) {
         log_info("Starting UDP LB daemon");
-        //udp_lb_daemon();
+        udp_lb_daemon();
         exit(0);
     } else if (pid < 0) {
         log_err("fork for UDP daemon");

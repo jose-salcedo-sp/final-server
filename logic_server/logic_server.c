@@ -2,12 +2,12 @@
 int sd;
 int udp_sd;
 
-const char *db_ips[LB_COUNT] = { "10.7.11.159"};
-const char *client_ips[LB_COUNT] = { "10.7.11.159"};
-int db_ports_udp[LB_COUNT]= {5001};
-int client_ports_udp[LB_COUNT]= {5000};
-int db_ports_tcp[LB_COUNT]= {3001};
-int client_ports_tcp[LB_COUNT]= {3000}; 
+const char *db_ips[LB_COUNT] = { "10.7.11.159", "10.7.11.159"};
+const char *client_ips[LB_COUNT] = { "10.7.11.159", "10.7.11.159"};
+int db_ports_udp[LB_COUNT]= {5001, 5101};
+int client_ports_udp[LB_COUNT]= {5000, 5100};
+int db_ports_tcp[LB_COUNT]= {3001, 3101};
+int client_ports_tcp[LB_COUNT]= {3000, 3100}; 
 const char *string_tcp_addr = MAKE_ADDR(IP, TCP_PORT);
 const char *string_udp_addr = MAKE_ADDR(IP, UDP_PORT);
 static const char *HMAC_SECRET = "mi_secreto_super_fuerte";

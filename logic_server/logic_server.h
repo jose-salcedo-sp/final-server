@@ -26,7 +26,7 @@
 #define IP "10.7.14.51"
 #define TCP_PORT 8080
 #define UDP_PORT 9090
-#define LB_COUNT 1
+#define LB_COUNT 2
 #define TIMEOUT 2
 #define MAX_PENDING_REQUESTS 100
 #define CESAR_SHIFT 3 

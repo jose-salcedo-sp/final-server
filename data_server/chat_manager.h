@@ -12,6 +12,8 @@
 #define MAX_TYPE_LENGTH 32
 #define MAX_TIMESTAMP_LENGTH 32
 
+#define SYSTEM_USER 1
+
 typedef struct {
 	int id;
 	char *chat_name;

@@ -48,7 +48,6 @@ int send_message(MYSQL *conn, Message *message) {
     char query[2048];
 
 
-    // 1. Insert the new message
     snprintf(query, sizeof(query),
         "INSERT INTO messages (chat_id, sender_id, content, message_type) VALUES (%d, %d, '%s', '%s')",
         message->chat_id, message->sender_id, message->content, message->message_type);
@@ -60,10 +59,8 @@ int send_message(MYSQL *conn, Message *message) {
         return -1;
     }
 
-    // 2. Get the last inserted message ID
     int message_id = (int) mysql_insert_id(conn);
 
-    // 3. Update the last_message_id in the Chats table
     snprintf(query, sizeof(query),
         "UPDATE chats SET last_message_id = %d WHERE chat_id = %d",
         message_id, message->chat_id);
@@ -305,7 +302,7 @@ int remove_from_chat(MYSQL *conn, int chat_id, int user_id) {
         return -1;
     }
 
-    return mysql_affected_rows(conn) > 0 ? 0 : -1;
+    return 0;
 }
 
 int get_participant_count(MYSQL *conn, int chat_id) {

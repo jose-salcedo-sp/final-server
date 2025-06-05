@@ -53,7 +53,11 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 					response_code = 400;
 					sprintf(response_text, "error retrieving password_hash for key: %s", key);
 				}
-			}
+			} else {
+        		strcpy(response_text, "Invalid parameters");
+        		response_code = 400;
+    		}
+
 
 			break;
 		}
@@ -158,7 +162,7 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 								system_message.sender_id = 1; //FIX LATER
 								strcpy(system_message.message_type, "system");
 								sprintf(system_message.content, "User %d has added user %d", participants[0], participants[i]);
-
+								send_message(conn, &system_message);
 								success_count++;
 							} else {
 								printf("Failed to add user %d to chat %s\n", participants[i], chat.chat_name);
@@ -211,6 +215,7 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 							system_message.sender_id = 1; //FIX LATER
 							strcpy(system_message.message_type, "system");
 							sprintf(system_message.content, "User %d has added user %d", added_by, participants[i]);
+							send_message(conn, &system_message);
 
 							success_count++;
 						} else {								
@@ -448,8 +453,8 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 							system_message.chat_id = chat_id;
 							system_message.sender_id = 1; //FIX LATER
 							strcpy(system_message.message_type, "system");
-							sprintf(system_message.content, "User %d has added user %d", removed_by, user_id);
-
+							sprintf(system_message.content, "User %d has removed user %d", removed_by, user_id);
+							send_message(conn, &system_message);
                     		removed_count++;
 						}
                 	}
@@ -486,6 +491,7 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 			system_message.sender_id = 1; //FIX LATER
 			strcpy(system_message.message_type, "system");			
 			sprintf(system_message.content, "User %d has exited the chat", user_id);
+			send_message(conn, &system_message);
 
 
         	if (participant_count == 1) {
@@ -517,6 +523,9 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
         	strcpy(response_text, "Invalid parameters for EXIT_CHAT");
         	response_code = 400;
     	}
+
+		free(chat_idItem);
+		free(user_idItem);
     	break;
 	}
 
@@ -538,7 +547,6 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
        	return;
     }
 
-    // Copy JSON string to buffer
 	strncpy(response_buffer, json_string, 4096 - 1);
 	response_buffer[4096 - 1] = '\0';
 	

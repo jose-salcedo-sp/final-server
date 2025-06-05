@@ -16,12 +16,7 @@
 
 #define BUFFER_SIZE 4096
 
-#define LB_IP "10.7.27.134"
-#define LB_UDP_PORT 5002
 
-#define LOCAL_IP "10.7.26.84"
-#define LOCAL_UDP_PORT 5001
-#define LOCAL_TCP_PORT 5000
 #define UDP_HEARTBEAT_INTERVAL 1
 
 void reset_database(MYSQL *conn);
@@ -43,7 +38,7 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 
 	switch (action) {
 
-		case VALIDATE_USER:
+		case VALIDATE_USER:{
 			char password_hash[100];
 			cJSON *keyItem = cJSON_GetObjectItemCaseSensitive(json, "key");
 
@@ -61,8 +56,9 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 			}
 
 			break;
+		}
 
-		case CREATE_USER:
+		case CREATE_USER:{
 
 			User newUser;
 
@@ -89,8 +85,9 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 
 
 			break;
+		}
 
-		case GET_USER_INFO:
+		case GET_USER_INFO:{
 			User user;
 			cJSON *info_keyItem = cJSON_GetObjectItemCaseSensitive(json, "key");
 
@@ -114,8 +111,9 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 			}
 			
 			break;
+		}
 
-		case CREATE_CHAT:
+		case CREATE_CHAT:{
 			Chat chat;
 			int participants[MAX_PARTICIPANTS];
 			
@@ -134,6 +132,15 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 
 					if (create_chat(conn, &chat) == 0){
 						participants[0] = chat.created_by;
+						
+						Message system_message = {0};
+						system_message.chat_id = chat.id;
+						system_message.sender_id = 1; //FIX LATER
+						strcpy(system_message.message_type, "system");
+						sprintf(system_message.content, "User %d has created the chat %s", participants[0], chat.chat_name);
+
+
+						send_message(conn, &system_message);
 
 						for (int i = 0; i < participant_count+1; i++) {
         					cJSON *id = cJSON_GetArrayItem(participant_idsItem, i);
@@ -146,6 +153,12 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 						for (int i = 0; i < participant_count + 1; i++){
 							if (add_to_chat(conn, chat.id, participants[i], participants[i] == chat.created_by) == 0){
 								printf("User %d added to chat %s\n", participants[i], chat.chat_name);
+
+								system_message.chat_id = chat.id;
+								system_message.sender_id = 1; //FIX LATER
+								strcpy(system_message.message_type, "system");
+								sprintf(system_message.content, "User %d has added user %d", participants[0], participants[i]);
+
 								success_count++;
 							} else {
 								printf("Failed to add user %d to chat %s\n", participants[i], chat.chat_name);
@@ -166,13 +179,14 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 			}
 
 			break;
+		}
 
-		case ADD_TO_GROUP_CHAT:
+		case ADD_TO_GROUP_CHAT:{
 			cJSON *added_byItem = cJSON_GetObjectItemCaseSensitive(json, "added_by");
 			cJSON *chat_idItem = cJSON_GetObjectItemCaseSensitive(json, "chat_id");
 			cJSON *participant_idsItem_atgc = cJSON_GetObjectItemCaseSensitive(json, "participant_ids");
 			
-			int participants_atgc[MAX_PARTICIPANTS];
+			int participants[MAX_PARTICIPANTS];
 
 			if (chat_idItem && chat_idItem -> valueint && participant_idsItem_atgc && cJSON_IsArray(participant_idsItem_atgc)){
 				if(cJSON_GetArraySize(participant_idsItem_atgc) > 0 && added_byItem && added_byItem -> valueint){
@@ -183,17 +197,24 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 					for (int i = 0; i < participant_count; i++) {
 						cJSON *id = cJSON_GetArrayItem(participant_idsItem_atgc, i);
 						if (cJSON_IsNumber(id)) {
-            				participants_atgc[i] = id->valueint;
+            				participants[i] = id->valueint;
 						}
         			}
 
+					Message system_message = {0};
 					int success_count = 0;
 					for (int i = 0; i < participant_count; i++){
-						if (add_to_chat(conn, chat_id, participants_atgc[i], 0) == 0){
-							printf("User %d added to chat %d\n", participants_atgc[i], chat_id);
+						if (add_to_chat(conn, chat_id, participants[i], 0) == 0){
+							printf("User %d added to chat %d\n", participants[i], chat_id);
+
+							system_message.chat_id = chat_id;
+							system_message.sender_id = 1; //FIX LATER
+							strcpy(system_message.message_type, "system");
+							sprintf(system_message.content, "User %d has added user %d", added_by, participants[i]);
+
 							success_count++;
 						} else {								
-							printf("Failed to add user %d to chat %d\n", participants_atgc[i], chat_id);
+							printf("Failed to add user %d to chat %d\n", participants[i], chat_id);
 						}
 					}
 
@@ -211,8 +232,9 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 			}	
 
 			break;
+		}
 
-		case SEND_MESSAGE:
+		case SEND_MESSAGE:{
 			Message message;
 
 			cJSON *Item_sm_chat_id = cJSON_GetObjectItem(json, "chat_id");
@@ -243,8 +265,9 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 				response_code = 400;	
 			}
 			break;
+		}
 
-		case GET_CHATS:
+		case GET_CHATS:{
 			cJSON *Item_gc_user_id = cJSON_GetObjectItemCaseSensitive(json, "user_id");
 			cJSON *Item_gc_last_update_timestamp = cJSON_GetObjectItemCaseSensitive(json, "last_update_timestamp")	;
 
@@ -296,8 +319,9 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 			}
 			
 			break;
+		}
 
-		case GET_CHAT_MESSAGES:
+		case GET_CHAT_MESSAGES:{
 			cJSON *Item_gcm_chat_id = cJSON_GetObjectItemCaseSensitive(json, "chat_id");
 			cJSON *Item_gcm_last_update_timestamp = cJSON_GetObjectItemCaseSensitive(json, "last_update_timestamp")	;
 
@@ -350,6 +374,7 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 
 			}
 			break;
+		}
 
 		case GET_CHAT_INFO:{
     		cJSON *chat_id_item = cJSON_GetObjectItemCaseSensitive(json, "chat_id");
@@ -412,13 +437,19 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
 
         	int removed_count = 0;
         	int total_to_remove = cJSON_GetArraySize(participant_idsItem);
-
+			
+			Message system_message = {0};
         	for (int i = 0; i < total_to_remove; i++) {
             	cJSON *idItem = cJSON_GetArrayItem(participant_idsItem, i);
             	if (cJSON_IsNumber(idItem)) {
                 	int user_id = idItem->valueint;
 					if (user_id != removed_by){
                 		if (remove_from_chat(conn, chat_id, user_id) == 0) {
+							system_message.chat_id = chat_id;
+							system_message.sender_id = 1; //FIX LATER
+							strcpy(system_message.message_type, "system");
+							sprintf(system_message.content, "User %d has added user %d", removed_by, user_id);
+
                     		removed_count++;
 						}
                 	}
@@ -450,6 +481,12 @@ void handle_action(MYSQL *conn, cJSON* json, char* response_buffer){
             	response_code = 400;
             	break;
         	}
+			Message system_message = {0};
+			system_message.chat_id = chat_id;		
+			system_message.sender_id = 1; //FIX LATER
+			strcpy(system_message.message_type, "system");			
+			sprintf(system_message.content, "User %d has exited the chat", user_id);
+
 
         	if (participant_count == 1) {
             	if (delete_chat(conn, chat_id) == 0) {

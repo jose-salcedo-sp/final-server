@@ -9,7 +9,7 @@
 #include "../lib/cjson/cJSON.h"
 #include <unistd.h>
 
-#define LOCAL_IP "10.7.26.84"
+#define LOCAL_IP "10.7.12.50"
 #define LOCAL_UDP_PORT 5001
 #define LOCAL_TCP_PORT 5000
 #define UDP_HEARTBEAT_INTERVAL 1

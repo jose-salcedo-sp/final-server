@@ -3,7 +3,7 @@ import json
 import time
 
 SERVER_IP = '127.0.0.1'
-SERVER_PORT = 8080
+SERVER_PORT = 5001
 BUFFER_SIZE = 4096
 
 def send_request(request_data):

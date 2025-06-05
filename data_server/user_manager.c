@@ -22,7 +22,7 @@ int validate_user(MYSQL *conn, char *key, char *password_hash) {
     MYSQL_ROW row;
 
     snprintf(query, sizeof(query),
-        "SELECT password_hash FROM users WHERE username = '%s' OR email = '%s'", key, key);
+        "SELECT password_hash, user_id FROM users WHERE username = '%s' OR email = '%s'", key, key);
 
     if (mysql_query(conn, query)) {
         fprintf(stderr, "Validate user query failed: %s\n", mysql_error(conn));
@@ -36,7 +36,7 @@ int validate_user(MYSQL *conn, char *key, char *password_hash) {
     }
 
     row = mysql_fetch_row(res);
-    if (row && row[0]) {
+    if (row && row[0] && atoi(row[1]) != 1) {
         strncpy(password_hash, row[0], 64);
         password_hash[64] = '\0'; // Ensure null termination
         printf("User found\npss: {%s}\n", password_hash);

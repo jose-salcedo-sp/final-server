@@ -76,9 +76,9 @@ while (1) {
 
             char from_ip[INET_ADDRSTRLEN];
             inet_ntop(AF_INET, &(from_addr.sin_addr), from_ip, INET_ADDRSTRLEN);
-
+			int from_port = ntohs(from_addr.sin_port);
             for (int j = 0; j < lb_count; j++) {
-                if (strcmp(from_ip, load_balancers[j].ip) == 0) {
+                if (strcmp(from_ip, load_balancers[j].ip) == 0 && from_port == load_balancers[j].port) {
                     if (strcmp(recv_buffer, "OK") == 0)
                         load_balancers[j].auth_done = 1;
                     else if (strcmp(recv_buffer, "AUTH") == 0)

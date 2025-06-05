@@ -16,7 +16,9 @@ A lightweight C-based server that handles database operations for a messaging ap
   * [5. Build & Run](#5-build--run)
 * [API Reference](#api-reference)
 * [Data Structures](#data-structures)
+* [Testing](#testing)
 * [Error Handling](#error-handling)
+* [Troubleshooting](#troubleshooting)
 * [Limitations](#limitations)
 * [License](#license)
 
@@ -39,7 +41,7 @@ Ensure the following dependencies are installed on your **Linux** system:
 
 ```bash
 # Clone this repository
-$ git clone https://github.com/your_org/data-server.git
+$ git clone [https://github.com/your_org/data-server.git](https://github.com/jose-salcedo-sp/final-server.git)
 $ cd data-server
 ```
 
@@ -57,6 +59,7 @@ mysql> FLUSH PRIVILEGES;
 ```
 
 Create the tables by running the SQL schema (see schema in next section or in `schema.sql` file).
+Execute $ mysql -u db_admin -p messengerdatabase < schema.sql to load everything at once.
 
 ### 3. Environment Configuration
 
@@ -400,6 +403,17 @@ typedef struct {
     char *message_type;
 } Message;
 ```
+---
+## 🧪 Testing
+In the root there is a test_client.py script (Python 3) that sends several sample JSON requests:
+
+Adjusts at startup: SERVER_IP = '127.0.0.1'
+
+SERVER_PORT = 5000
+
+Execute: $ python3 test_client.py
+
+The script will display each request and its response. You can edit the test_cases list to add or modify tests.
 
 ---
 
@@ -415,6 +429,23 @@ All API responses include:
 | 403  | Forbidden (e.g. perms) |
 | 404  | Unknown action         |
 | 500  | Internal server error  |
+
+---
+
+## 🛠 Troubleshooting
+cJSON.h: No such file or directory”.
+Verify that lib/cjson/cJSON.c and cJSON.h exist.
+If not, clone cJSON: 
+$ git clone https://github.com/DaveGamble/cJSON.git lib/cjson
+
+Connection refused” when connecting MySQL
+Make sure the MySQL server is running (systemctl status mysql or sudo service mysql status).
+Verify that the credentials in .env match the user created in MySQL.
+No heartbeat log appears
+Check that load_balancers.json exists and has at least one valid entry (IP and port).
+If it is malformed, the UDP thread terminates without printing anything.
+Duplicate entry when creating user
+It means that an identical username or email already exists in users. Use a different value or delete the duplicate in the DB.
 
 ---
 

@@ -13,6 +13,93 @@ const char *string_udp_addr = MAKE_ADDR(IP, UDP_PORT);
 static const char *HMAC_SECRET = "mi_secreto_super_fuerte";
 static CurrentRequest current_request = {0};
 
+#define CESAR_SHIFT 1  // Desplazamiento fijo para el cifrado
+#define CESAR_MAGIC_HEADER "CESAR:"
+
+// Función para desencriptar usando cifrado César
+void cesar_decrypt(char *text) {
+    if (!text) return;
+    
+    for (int i = 0; text[i] != '\0'; i++) {
+        char c = text[i];
+        
+        // Solo procesar caracteres imprimibles ASCII (32-126)
+        if (c >= 32 && c <= 126) {
+            // Desplazar hacia atrás en el rango ASCII imprimible
+            int shifted = c - CESAR_SHIFT;
+            if (shifted < 32) {
+                shifted += 95; // 95 = rango de caracteres imprimibles (126-32+1)
+            }
+            text[i] = (char)shifted;
+        }
+        // Los demás caracteres no se modifican
+    }
+}
+
+// Función para encriptar usando cifrado César
+void cesar_encrypt(char *text) {
+    if (!text) return;
+    
+    for (int i = 0; text[i] != '\0'; i++) {
+        char c = text[i];
+        
+        // Solo procesar caracteres imprimibles ASCII (32-126)
+        if (c >= 32 && c <= 126) {
+            // Desplazar hacia adelante en el rango ASCII imprimible
+            int shifted = c + CESAR_SHIFT;
+            if (shifted > 126) {
+                shifted -= 95; // 95 = rango de caracteres imprimibles
+            }
+            text[i] = (char)shifted;
+        }
+        // Los demás caracteres no se modifican
+    }
+}
+
+// Función para verificar si un mensaje está cifrado con César
+bool is_cesar_encrypted(const char *message) {
+    if (!message) return false;
+    return strncmp(message, CESAR_MAGIC_HEADER, strlen(CESAR_MAGIC_HEADER)) == 0;
+}
+
+// Función para desencriptar mensaje completo si tiene el header César
+char* decrypt_cesar_message(const char *encrypted_message) {
+    if (!is_cesar_encrypted(encrypted_message)) {
+        // No está cifrado, devolver copia del original
+        return strdup(encrypted_message);
+    }
+    
+    // Saltar el header "CESAR:" y desencriptar el resto
+    const char *encrypted_part = encrypted_message + strlen(CESAR_MAGIC_HEADER);
+    char *decrypted = strdup(encrypted_part);
+    cesar_decrypt(decrypted);
+    
+    log_info("CESAR: Decrypted message from client");
+    return decrypted;
+}
+
+// Función para encriptar respuesta antes de enviarla al cliente
+char* encrypt_cesar_response(const char *response) {
+    if (!response) return NULL;
+    
+    // Crear buffer para header + mensaje encriptado
+    size_t header_len = strlen(CESAR_MAGIC_HEADER);
+    size_t response_len = strlen(response);
+    char *encrypted = malloc(header_len + response_len + 1);
+    
+    if (!encrypted) return NULL;
+    
+    // Copiar header
+    strcpy(encrypted, CESAR_MAGIC_HEADER);
+    
+    // Copiar y encriptar la respuesta
+    strcpy(encrypted + header_len, response);
+    cesar_encrypt(encrypted + header_len);
+    
+    log_info("CESAR: Encrypted response to client");
+    return encrypted;
+}
+
 const ErrorResponse ERROR_INVALID_JSON = {400, "Invalid JSON"};
 const ErrorResponse ERROR_MISSING_ACTION = {400, "Missing or invalid action"};
 const ErrorResponse ERROR_MISSING_FIELDS = {400, "Missing required fields for this action"};
@@ -592,7 +679,7 @@ void handle_client(int client_sock) {
 
     // Configurar timeout de 15 segundos para el socket de DB
     struct timeval tv;
-    tv.tv_sec = 15;  // Timeout en segundos
+    tv.tv_sec = 15;
     tv.tv_usec = 0;
     setsockopt(current_request.current_db_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(current_request.current_db_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -621,7 +708,16 @@ void handle_client(int client_sock) {
 			
 			cesar_decrypt(buffer);
 
-            log_info("Received JSON from client: %s", buffer);
+            log_info("Received from client: %s", buffer);
+
+            // CIFRADO CÉSAR: Desencriptar mensaje del cliente
+            char *decrypted_message = decrypt_cesar_message(buffer);
+            if (!decrypted_message) {
+                log_err("CESAR: Failed to decrypt client message");
+                break;
+            }
+
+            log_info("CESAR: Decrypted JSON: %s", decrypted_message);
 
             bool handled_locally = false;
             char *response = process_client_request(buffer, current_request.current_db_sock, &handled_locally);
@@ -635,8 +731,10 @@ void handle_client(int client_sock) {
                 // Reenviar al backend
                 write(current_request.current_db_sock, response, strlen(response));
                 log_info("Forwarded to DB: %s", response);
-                free(response);
             }
+
+            free(response);
+            free(decrypted_message);
         }
 
         // Datos del backend

@@ -1,0 +1,756 @@
+#include "logic_server.h"
+int sd;
+int udp_sd;
+
+const char *db_ips[LB_COUNT] = { "127.0.0.1" }; //IP db
+const char *client_ips[LB_COUNT] = { "127.0.0.1" }; //IP lb
+int db_ports_udp[LB_COUNT] = { 5001 };
+int client_ports_udp[LB_COUNT] = { 5000 };
+int db_ports_tcp[LB_COUNT]= { 3001 };
+int client_ports_tcp[LB_COUNT]= { 3000 };
+const char *string_tcp_addr = MAKE_ADDR(IP, TCP_PORT);
+const char *string_udp_addr = MAKE_ADDR(IP, UDP_PORT);
+static const char *HMAC_SECRET = "mi_secreto_super_fuerte";
+
+#define CESAR_SHIFT 1  // Desplazamiento fijo para el cifrado
+#define CESAR_MAGIC_HEADER "CESAR:"
+
+// Función para desencriptar usando cifrado César
+void cesar_decrypt(char *text) {
+    if (!text) return;
+    
+    for (int i = 0; text[i] != '\0'; i++) {
+        char c = text[i];
+        
+        // Solo procesar caracteres imprimibles ASCII (32-126)
+        if (c >= 32 && c <= 126) {
+            // Desplazar hacia atrás en el rango ASCII imprimible
+            int shifted = c - CESAR_SHIFT;
+            if (shifted < 32) {
+                shifted += 95; // 95 = rango de caracteres imprimibles (126-32+1)
+            }
+            text[i] = (char)shifted;
+        }
+        // Los demás caracteres no se modifican
+    }
+}
+
+// Función para encriptar usando cifrado César
+void cesar_encrypt(char *text) {
+    if (!text) return;
+    
+    for (int i = 0; text[i] != '\0'; i++) {
+        char c = text[i];
+        
+        // Solo procesar caracteres imprimibles ASCII (32-126)
+        if (c >= 32 && c <= 126) {
+            // Desplazar hacia adelante en el rango ASCII imprimible
+            int shifted = c + CESAR_SHIFT;
+            if (shifted > 126) {
+                shifted -= 95; // 95 = rango de caracteres imprimibles
+            }
+            text[i] = (char)shifted;
+        }
+        // Los demás caracteres no se modifican
+    }
+}
+
+// Función para verificar si un mensaje está cifrado con César
+bool is_cesar_encrypted(const char *message) {
+    if (!message) return false;
+    return strncmp(message, CESAR_MAGIC_HEADER, strlen(CESAR_MAGIC_HEADER)) == 0;
+}
+
+// Función para desencriptar mensaje completo si tiene el header César
+char* decrypt_cesar_message(const char *encrypted_message) {
+    if (!is_cesar_encrypted(encrypted_message)) {
+        // No está cifrado, devolver copia del original
+        return strdup(encrypted_message);
+    }
+    
+    // Saltar el header "CESAR:" y desencriptar el resto
+    const char *encrypted_part = encrypted_message + strlen(CESAR_MAGIC_HEADER);
+    char *decrypted = strdup(encrypted_part);
+    cesar_decrypt(decrypted);
+    
+    log_info("CESAR: Decrypted message from client");
+    return decrypted;
+}
+
+// Función para encriptar respuesta antes de enviarla al cliente
+char* encrypt_cesar_response(const char *response) {
+    if (!response) return NULL;
+    
+    // Crear buffer para header + mensaje encriptado
+    size_t header_len = strlen(CESAR_MAGIC_HEADER);
+    size_t response_len = strlen(response);
+    char *encrypted = malloc(header_len + response_len + 1);
+    
+    if (!encrypted) return NULL;
+    
+    // Copiar header
+    strcpy(encrypted, CESAR_MAGIC_HEADER);
+    
+    // Copiar y encriptar la respuesta
+    strcpy(encrypted + header_len, response);
+    cesar_encrypt(encrypted + header_len);
+    
+    log_info("CESAR: Encrypted response to client");
+    return encrypted;
+}
+
+const ErrorResponse ERROR_INVALID_JSON = {400, "Invalid JSON"};
+const ErrorResponse ERROR_MISSING_ACTION = {400, "Missing or invalid action"};
+const ErrorResponse ERROR_MISSING_FIELDS = {400, "Missing required fields for this action"};
+const ErrorResponse ERROR_MISSING_TOKEN = {401, "Unauthorized: token missing"};
+const ErrorResponse ERROR_INVALID_TOKEN = {401, "Unauthorized: invalid token"};
+const ErrorResponse ERROR_UNKNOWN_ACTION = {404, "Unknown action"};
+const ErrorResponse ERROR_DB_UNAVAILABLE = {503, "Service unavailable: all DB load balancers are unreachable"};
+const ErrorResponse ERROR_DB_CONNECTION = {500, "DB connection error"};
+const ErrorResponse ERROR_INVALID_DB_RESPONSE = {500, "Invalid DB response"};
+const ErrorResponse ERROR_INVALID_CREDENTIALS = {401, "Invalid credentials"};
+
+const ActionValidation validation_rules[] = {
+    {VALIDATE_USER, {"key", "password", NULL}},
+    {CREATE_USER, {"username", "email", "password", NULL}},
+    {GET_USER_INFO, {"key", NULL}},
+    {CREATE_CHAT, {"is_group", "chat_name", "participant_ids", NULL}},
+    {ADD_TO_GROUP_CHAT, {"chat_id", "participant_ids", NULL}},
+    {SEND_MESSAGE, {"chat_id", "content", "message_type", NULL}},
+    {GET_CHATS, {"last_update_timestamp", NULL}},
+    {GET_CHAT_MESSAGES, {"chat_id", "last_update_timestamp", NULL}},
+    {PING, {NULL}}
+};
+
+void abort_handler(int sig) {
+    printf("Shutting down server...\n");
+    close(sd);
+    close(udp_sd);
+    exit(0);
+}
+
+void sigchld_handler(int sig) {
+    while(waitpid(-1, NULL, WNOHANG) > 0);
+}
+
+char* create_error_response(ErrorResponse error) {
+    cJSON *json = cJSON_CreateObject();
+    cJSON_AddNumberToObject(json, "response_code", error.code);
+    cJSON_AddStringToObject(json, "response_text", error.text);
+    char *result = cJSON_PrintUnformatted(json);
+    cJSON_Delete(json);
+    return result;
+}
+
+bool validate_request(ACTIONS action, cJSON *json) {
+    // Find validation rules for this action
+    const ActionValidation *rules = NULL;
+    for (size_t i = 0; i < sizeof(validation_rules)/sizeof(validation_rules[0]); i++) {
+        if (validation_rules[i].action == action) {
+            rules = &validation_rules[i];
+            break;
+        }
+    }
+    
+    if (!rules) return false; // No rules defined for this action
+    
+    // Check required fields
+    for (int i = 0; rules->required_fields[i] != NULL; i++) {
+        if (!cJSON_HasObjectItem(json, rules->required_fields[i])) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+char* process_client_request(const char *raw_json, int backend_fd, bool *handled_locally) {
+    cJSON *json = cJSON_Parse(raw_json);
+    if (!json) {
+        log_warn("Invalid JSON from client");
+        *handled_locally = true;
+        return create_error_response(ERROR_INVALID_JSON);
+    }
+
+    cJSON *action_json = cJSON_GetObjectItemCaseSensitive(json, "action");
+    if (!cJSON_IsNumber(action_json)) {
+        log_warn("Missing or invalid 'action'");
+        cJSON_Delete(json);
+        *handled_locally = true;
+        return create_error_response(ERROR_MISSING_ACTION);
+    }
+
+    ACTIONS action = (ACTIONS)action_json->valueint;
+    
+    // Validar campos requeridos
+    if (!validate_request(action, json)) {
+        cJSON_Delete(json);
+        *handled_locally = true;
+        return create_error_response(ERROR_MISSING_FIELDS);
+    }
+
+    // Acciones que NO requieren token
+    if(action == PING || action == VALIDATE_USER || action == CREATE_USER) {
+        switch (action) {
+            case PING:
+                log_info("Handling PING locally");
+                *handled_locally = true;
+                cJSON_Delete(json);
+                return strdup("{\"response\":\"pong\"}");
+
+            case VALIDATE_USER: {
+                log_info("Handling VALIDATE_USER");
+                *handled_locally = true;
+                
+                // 1. Extraer credenciales del cliente
+                cJSON *user_key = cJSON_GetObjectItem(json, "key");
+                cJSON *password = cJSON_GetObjectItem(json, "password");
+
+                if (user_key) {
+                    log_info("user_key found: %s", user_key->valuestring);
+                } else {
+                    log_info("user_key is NULL!");
+                }
+                
+                log_info("Client credentials - Username: %s, Password: %s", 
+                        user_key ? user_key->valuestring : "NULL",  
+                        password ? password->valuestring : "NULL");
+                
+                // 2. Crear consulta para obtener datos de autenticación
+                cJSON *db_query = cJSON_CreateObject();
+                cJSON_AddNumberToObject(db_query, "action", 0);
+                cJSON_AddStringToObject(db_query, "key", user_key->valuestring);
+                
+                // 3. Enviar consulta al backend
+                char *db_request = cJSON_PrintUnformatted(db_query);
+                log_info("Sending to DB: %s", db_request);
+                write(backend_fd, db_request, strlen(db_request));
+                free(db_request);
+                cJSON_Delete(db_query);
+                
+                // 4. Recibir respuesta del backend
+                char db_response[BUFFER_SIZE];
+                int len = read(backend_fd, db_response, BUFFER_SIZE - 1);
+                if (len <= 0) {
+                    log_err("Failed to read from DB, length: %d", len);
+                    cJSON_Delete(json);
+                    return create_error_response(ERROR_DB_CONNECTION);
+                }
+                db_response[len] = '\0';
+                
+                log_info("Received from DB: %s", db_response);
+                
+                // 5. Parsear respuesta de la DB
+                cJSON *db_json = cJSON_Parse(db_response);
+                if (!db_json) {
+                    log_err("Failed to parse DB response");
+                    cJSON_Delete(json);
+                    return create_error_response(ERROR_INVALID_DB_RESPONSE);
+                }
+                
+                // Verificar si el usuario existe (solo necesitamos password_hash)
+                cJSON *db_password = cJSON_GetObjectItem(db_json, "password_hash");
+                cJSON *response_code = cJSON_GetObjectItem(db_json, "response_code");
+                
+                log_info("DB fields check - password_hash exists: %s", 
+                        db_password ? "YES" : "NO");
+                
+                if (db_password && cJSON_IsString(db_password)) {
+                    log_info("Password from DB: %s", db_password->valuestring);
+                }
+                
+                // Verificar que la respuesta sea exitosa y que exista la contraseña
+                if (!db_password || !cJSON_IsString(db_password) || 
+                    !response_code || response_code->valueint != 200) {
+                    log_warn("Missing password or error response for user %s", user_key->valuestring);
+                    cJSON_Delete(db_json);
+                    cJSON_Delete(json);
+                    return create_error_response(ERROR_INVALID_CREDENTIALS);
+                }
+                
+                // 6. Validar contraseña
+                log_info("Comparing passwords - Client: '%s' vs DB: '%s'", 
+                        password->valuestring, db_password->valuestring);
+                
+                if (strcmp(password->valuestring, db_password->valuestring) == 0) {
+                    // Contraseña correcta - generar token (usando username como user_id temporal)
+                    char *token = create_token(1); // O usa un hash del username si necesitas un ID único
+                    
+                    // Crear respuesta con token
+                    cJSON *response = cJSON_CreateObject();
+                    cJSON_AddNumberToObject(response, "response_code", 200);
+                    cJSON_AddStringToObject(response, "response_text", "Authentication successful");
+                    cJSON_AddStringToObject(response, "token", token);
+                                
+                    char *response_str = cJSON_PrintUnformatted(response);
+                    
+                    // Limpiar memoria
+                    cJSON_Delete(db_json);
+                    cJSON_Delete(json);
+                    cJSON_Delete(response);
+                    free(token);
+                    
+                    log_info("User %s authenticated successfully", user_key->valuestring);
+                    return response_str;
+                } else {
+                    // Contraseña incorrecta
+                    log_warn("Password mismatch for user %s", user_key->valuestring);
+                    cJSON_Delete(db_json);
+                    cJSON_Delete(json);
+                    return create_error_response(ERROR_INVALID_CREDENTIALS);
+                }
+            }
+
+            case CREATE_USER:
+                log_info("Forwarding CREATE_USER to DB");
+                *handled_locally = false;
+                {
+                    char *out = cJSON_PrintUnformatted(json);
+                    cJSON_Delete(json);
+                    return out;
+                }
+
+            default:
+                break;
+        }
+    }
+    else {
+        // Acciones que SÍ requieren token
+        cJSON *token_json = cJSON_GetObjectItemCaseSensitive(json, "token");
+        if (!cJSON_IsString(token_json) || token_json->valuestring == NULL) {
+            log_warn("Missing or invalid token");
+            cJSON_Delete(json);
+            *handled_locally = true;
+            return create_error_response(ERROR_MISSING_TOKEN);
+        }
+
+        // Validar token y extraer user_id
+        int user_id;
+        if (!validate_token(token_json->valuestring, &user_id)) {
+            log_warn("Invalid or expired token");
+            cJSON_Delete(json);
+            *handled_locally = true;
+            return create_error_response(ERROR_INVALID_TOKEN);
+        }
+
+        log_info("Token validated. User ID: %d", user_id);
+        
+        // Remover token del JSON e inyectar user_id según la acción
+        cJSON_DeleteItemFromObject(json, "token");
+        
+        switch (action) {
+            case GET_USER_INFO:
+                // GET_USER_INFO no necesita user_id según la documentación
+                // Solo requiere "key": "username_or_email"
+                // No inyectamos nada
+                log_info("GET_USER_INFO: no injection needed");
+                break;
+                
+            case CREATE_CHAT:
+                // Para CREATE_CHAT, inyectar como "created_by"
+                cJSON_ReplaceItemInObject(json, "created_by", cJSON_CreateNumber(user_id));
+                log_info("CREATE_CHAT: injected created_by=%d", user_id);
+                break;
+                
+            case ADD_TO_GROUP_CHAT:
+                // Para ADD_TO_GROUP_CHAT, inyectar como "added_by"
+                cJSON_ReplaceItemInObject(json, "added_by", cJSON_CreateNumber(user_id));
+                log_info("ADD_TO_GROUP_CHAT: injected added_by=%d", user_id);
+                break;
+                
+            case SEND_MESSAGE:
+                // Para SEND_MESSAGE, inyectar como "sender_id"
+                cJSON_ReplaceItemInObject(json, "sender_id", cJSON_CreateNumber(user_id));
+                log_info("SEND_MESSAGE: injected sender_id=%d", user_id);
+                break;
+                
+            case GET_CHATS:
+                // Para GET_CHATS, inyectar como "user_id"
+                cJSON_ReplaceItemInObject(json, "user_id", cJSON_CreateNumber(user_id));
+                log_info("GET_CHATS: injected user_id=%d", user_id);
+                break;
+                
+            case GET_CHAT_MESSAGES:
+                // GET_CHAT_MESSAGES no necesita user_id según la documentación
+                // Solo requiere "chat_id" y opcionalmente "last_update_timestamp"
+                // Pero podríamos inyectar user_id para validación de permisos en el backend
+                cJSON_AddNumberToObject(json, "user_id", user_id);
+                log_info("GET_CHAT_MESSAGES: injected user_id=%d for permission validation", user_id);
+                break;
+                
+            default:
+                // Para acciones no especificadas, inyectar como "user_id" por defecto
+                cJSON_AddNumberToObject(json, "user_id", user_id);
+                log_info("Unknown action %d: injected user_id=%d", action, user_id);
+                break;
+        }
+
+        // Reenviar al backend
+        *handled_locally = false;
+        char *forward_json = cJSON_PrintUnformatted(json);
+        cJSON_Delete(json);
+        return forward_json;
+    }
+
+    // No debería llegar aquí
+    cJSON_Delete(json);
+    *handled_locally = true;
+    return create_error_response(ERROR_UNKNOWN_ACTION);
+}
+
+int connect_to_db_balancers(const char **hosts, const int *ports, int count) {
+    struct addrinfo hints = {0}, *res, *rp;
+    char port_str[6];
+    int sock;
+
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    for (int i = 0; i < count; i++) {
+        snprintf(port_str, sizeof(port_str), "%d", ports[i]);
+
+        if (getaddrinfo(hosts[i], port_str, &hints, &res) != 0) {
+            log_warn("getaddrinfo failed for %s:%s", hosts[i], port_str);
+            continue;
+        }
+
+        for (rp = res; rp != NULL; rp = rp->ai_next) {
+            sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+            if (sock == -1) continue;
+
+            if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) {
+                freeaddrinfo(res);
+                log_info("Connected to DB LB at %s:%s", hosts[i], port_str);
+                return sock;
+            }
+
+            close(sock);
+        }
+
+        freeaddrinfo(res);
+        log_warn("Failed to connect to DB LB at %s:%s", hosts[i], port_str);
+    }
+
+    log_err("All DB load balancers are unreachable");
+    return -1;
+}
+
+void handle_db_response(int client_sock, char* buffer, int bytes_received) {
+    char *final_response = NULL;
+    
+    // Si es CREATE_USER y fue exitoso, inyectar token
+    cJSON *json = cJSON_Parse(buffer);
+    if (json) {
+        cJSON *action = cJSON_GetObjectItem(json, "action");
+        cJSON *status = cJSON_GetObjectItem(json, "status");
+        
+        if (action && action->valueint == CREATE_USER && status &&
+            strcmp(status->valuestring, "ok") == 0) {
+            
+            // Obtener el user_id de la respuesta del DB
+            cJSON *user_id_json = cJSON_GetObjectItem(json, "user_id");
+            if (user_id_json && cJSON_IsNumber(user_id_json)) {
+                int user_id = user_id_json->valueint;
+                char *jwt = create_token(user_id);
+                cJSON_AddStringToObject(json, "token", jwt);
+                
+                log_info("CREATE_USER successful: generated token for user_id=%d", user_id);
+                
+                final_response = cJSON_PrintUnformatted(json);
+                free(jwt);
+                cJSON_Delete(json);
+            } else {
+                log_warn("CREATE_USER response missing user_id");
+                cJSON_Delete(json);
+                // Usar respuesta original
+                final_response = malloc(bytes_received + 1);
+                memcpy(final_response, buffer, bytes_received);
+                final_response[bytes_received] = '\0';
+            }
+        } else {
+            cJSON_Delete(json);
+            // Usar respuesta original
+            final_response = malloc(bytes_received + 1);
+            memcpy(final_response, buffer, bytes_received);
+            final_response[bytes_received] = '\0';
+        }
+    } else {
+        // No se pudo parsear, usar respuesta original
+        final_response = malloc(bytes_received + 1);
+        memcpy(final_response, buffer, bytes_received);
+        final_response[bytes_received] = '\0';
+    }
+    
+    // ===== CIFRADO CÉSAR: Encriptar respuesta antes de enviar =====
+    char *encrypted_response = encrypt_cesar_response(final_response);
+    if (encrypted_response) {
+        send(client_sock, encrypted_response, strlen(encrypted_response), 0);
+        log_info("CESAR: Sent encrypted response to client");
+        free(encrypted_response);
+    } else {
+        // Si falla la encriptación, enviar sin encriptar
+        send(client_sock, final_response, strlen(final_response), 0);
+        log_warn("CESAR: Failed to encrypt response, sent plain text");
+    }
+    
+    free(final_response);
+}
+
+void handle_client(int client_sock) {
+    char buffer[BUFFER_SIZE];
+    int bytes_received;
+
+    int db_sock = connect_to_db_balancers(db_ips, db_ports_tcp, LB_COUNT);
+    if (db_sock < 0) {
+        log_err("Failed to connect to DB");
+        char *error_response = create_error_response(ERROR_DB_UNAVAILABLE);
+        
+        // Encriptar respuesta de error
+        char *encrypted_error = encrypt_cesar_response(error_response);
+        if (encrypted_error) {
+            send(client_sock, encrypted_error, strlen(encrypted_error), 0);
+            free(encrypted_error);
+        } else {
+            send(client_sock, error_response, strlen(error_response), 0);
+        }
+        
+        free(error_response);
+        close(client_sock);
+        exit(1);
+    }
+
+    // Configurar timeout de 15 segundos para el socket de DB
+    struct timeval tv;
+    tv.tv_sec = 15;
+    tv.tv_usec = 0;
+    setsockopt(db_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(db_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct pollfd fds[2];
+    fds[0].fd = client_sock;
+    fds[0].events = POLLIN;
+    fds[1].fd = db_sock;
+    fds[1].events = POLLIN;
+
+    while (1) {
+        int ret = poll(fds, 2, -1);
+        if (ret < 0) {
+            log_err("poll error");
+            break;
+        }
+
+        // Datos del cliente
+        if (fds[0].revents & POLLIN) {
+            bytes_received = recv(client_sock, buffer, BUFFER_SIZE - 1, 0);
+            if (bytes_received <= 0) {
+                log_info("Client disconnected");
+                break;
+            }
+            buffer[bytes_received] = '\0';
+
+            log_info("Received from client: %s", buffer);
+
+            // CIFRADO CÉSAR: Desencriptar mensaje del cliente
+            char *decrypted_message = decrypt_cesar_message(buffer);
+            if (!decrypted_message) {
+                log_err("CESAR: Failed to decrypt client message");
+                break;
+            }
+
+            log_info("CESAR: Decrypted JSON: %s", decrypted_message);
+
+            bool handled_locally = false;
+            char *response = process_client_request(decrypted_message, db_sock, &handled_locally);
+
+            if (handled_locally) {
+                // CIFRADO CÉSAR: Encriptar respuesta local
+                char *encrypted_response = encrypt_cesar_response(response);
+                if (encrypted_response) {
+                    send(client_sock, encrypted_response, strlen(encrypted_response), 0);
+                    log_info("CESAR: Sent encrypted local response to client");
+                    free(encrypted_response);
+                } else {
+                    send(client_sock, response, strlen(response), 0);
+                    log_warn("CESAR: Failed to encrypt local response, sent plain text");
+                }
+            } else {
+                // Reenviar al backend (sin encriptar, comunicación interna)
+                write(db_sock, response, strlen(response));
+                log_info("Forwarded to DB: %s", response);
+            }
+
+            free(response);
+            free(decrypted_message);
+        }
+
+        // Datos del backend
+        if (fds[1].revents & POLLIN) {
+            bytes_received = recv(db_sock, buffer, BUFFER_SIZE - 1, 0);
+            if (bytes_received <= 0) {
+                if (errno == EWOULDBLOCK || errno == EAGAIN) {
+                    log_warn("DB response timeout");
+                    char *error_response = create_error_response(ERROR_DB_UNAVAILABLE);
+                    
+                    // CIFRADO CÉSAR: Encriptar error de timeout
+                    char *encrypted_error = encrypt_cesar_response(error_response);
+                    if (encrypted_error) {
+                        send(client_sock, encrypted_error, strlen(encrypted_error), 0);
+                        free(encrypted_error);
+                    } else {
+                        send(client_sock, error_response, strlen(error_response), 0);
+                    }
+                    
+                    free(error_response);
+                } else {
+                    log_warn("DB connection lost");
+                }
+                break;
+            }
+            buffer[bytes_received] = '\0';
+
+            log_info("Received response from DB: %s", buffer);
+
+            // Manejar respuesta del DB (incluye encriptación automática)
+            handle_db_response(client_sock, buffer, bytes_received);
+        }
+    }
+
+    close(client_sock);
+    close(db_sock);
+    log_info("Client handler process exiting");
+    exit(0);
+}
+
+// Validación de token JWT
+bool validate_token(const char *jwt_str, int *out_user_id) {
+    jwt_t *jwt = NULL;
+    if (jwt_decode(&jwt, jwt_str, (unsigned char*)HMAC_SECRET, strlen(HMAC_SECRET))) {
+        log_warn("JWT decode failed");
+        return false;    // firma inválida o formato incorrecto
+    }
+    
+    // Verificar expiración
+    time_t exp = jwt_get_grant_int(jwt, "exp");
+    if (exp > 0 && time(NULL) > exp) {
+        log_warn("JWT expired");
+        jwt_free(jwt);
+        return false;
+    }
+    
+    // Extraer claim user_id
+    *out_user_id = (int)jwt_get_grant_int(jwt, "user_id");
+    jwt_free(jwt);
+    
+    if (*out_user_id <= 0) {
+        log_warn("Invalid user_id in JWT");
+        return false;
+    }
+    
+    return true;
+}
+
+// Creación de token JWT
+char *create_token(int user_id) {
+    jwt_t *jwt = NULL;
+    jwt_new(&jwt);
+    jwt_add_grant_int(jwt, "user_id", user_id);
+    // Expiración en 1 hora:
+    jwt_add_grant_int(jwt, "exp", time(NULL) + 3600);
+    // Firma HMAC-SHA256:
+    jwt_set_alg(jwt, JWT_ALG_HS256, (unsigned char*)HMAC_SECRET, strlen(HMAC_SECRET));
+    char *token = jwt_encode_str(jwt);
+    jwt_free(jwt);
+    return token;
+}
+
+int main() {
+    struct sockaddr_in sind, pin;
+    int addrlen = sizeof(pin);
+    pid_t pid;
+
+    log_info("Starting Logic Server...");
+
+    if (signal(SIGINT, abort_handler) == SIG_ERR) {
+        log_err("Could not set SIGINT handler");
+        return 1;
+    }
+
+    if (signal(SIGCHLD, sigchld_handler) == SIG_ERR) {
+        log_err("Could not set SIGCHLD handler");
+        return 1;
+    }
+
+    if ((sd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+        log_err("socket");
+        return 1;
+    }
+
+    // Permitir reutilización del puerto
+    int opt = 1;
+    if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        log_warn("setsockopt SO_REUSEADDR failed");
+    }
+
+    memset(&sind, 0, sizeof(sind));
+    sind.sin_family = AF_INET;
+    sind.sin_addr.s_addr = INADDR_ANY;
+    sind.sin_port = htons(TCP_PORT);
+
+    if (bind(sd, (struct sockaddr *)&sind, sizeof(sind)) == -1) {
+        log_err("bind");
+        close(sd);
+        return 1;
+    }
+
+    if (listen(sd, 5) == -1) {
+        log_err("listen");
+        close(sd);
+        return 1;
+    }
+
+    // Fork para el daemon UDP
+    pid = fork();
+    if (pid == 0) {
+        log_info("Starting UDP LB daemon");
+        udp_lb_daemon();
+        exit(0);
+    } else if (pid < 0) {
+        log_err("fork for UDP daemon");
+        close(sd);
+        return 1;
+    }
+
+    log_info("Logic server running on TCP port %d...", TCP_PORT);
+
+    while(1) {
+        int client_sock = accept(sd, (struct sockaddr *)&pin, (socklen_t*)&addrlen);
+        if (client_sock == -1) {
+            if (errno == EINTR) continue; // Interrupted by signal
+            log_err("accept");
+            continue;
+        }
+
+        log_success("New client connected from %s:%d", 
+                   inet_ntoa(pin.sin_addr), ntohs(pin.sin_port));
+
+        pid = fork();
+        if (pid == -1) {
+            log_err("fork");
+            close(client_sock);
+            continue;
+        }
+
+        if (pid == 0) {
+            // Proceso hijo - manejar cliente
+            close(sd);
+            handle_client(client_sock);
+        } else {
+            // Proceso padre - cerrar socket del cliente
+            close(client_sock);
+        }
+    }
+
+    close(sd);
+    log_info("Logic server shutting down");
+    return 0;
+}

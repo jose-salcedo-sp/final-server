@@ -21,14 +21,16 @@
 #include <jwt.h>
 
 
-
 #define BUFFER_SIZE 4096
 #define UUIDv7_SIZE 32
-#define IP "127.0.1.1" //IP Server
+#define IP "10.7.14.51"
 #define TCP_PORT 8080
 #define UDP_PORT 9090
-#define LB_COUNT 1
+#define LB_COUNT 2
 #define TIMEOUT 2
+#define MAX_PENDING_REQUESTS 100
+#define CESAR_SHIFT 3 
+
 
 #define STRINGIFY(x) #x
 #define MAKE_ADDR(ip, port) ip ":" STRINGIFY(port) 
@@ -54,13 +56,22 @@ typedef enum {
 	SEND_MESSAGE = 6, 
 	GET_CHATS = 7, 
 	GET_CHAT_MESSAGES = 8,
-  	PING = 69,
+	GET_CHAT_INFO = 9,
+	REMOVE_FROM_CHAT = 10,
+	EXIT_CHAT = 11,
+  	PING = 100,
 } ACTIONS;
 
 typedef enum {
     SENDING_ADDRESS,
     SENDING_OK
 } LBState;
+
+typedef enum {
+    AUTH_STATE_INITIAL,
+    AUTH_STATE_VALIDATED,
+    AUTH_STATE_GOT_USER_INFO
+} AuthState;
 
 typedef struct {
     struct sockaddr_in addr;
@@ -77,7 +88,16 @@ typedef struct {
     const char *required_fields[10];
 } ActionValidation;
 
+typedef struct {
+    ACTIONS action;
+    cJSON *request_json;  // Original request from client
+    AuthState auth_state; // For tracking authentication flow
+    char *key;       // Store username between requests
+    int current_db_sock;  // Track the current DB socket
+} CurrentRequest;
+
 void udp_lb_daemon();
 bool validate_token(const char *jwt, int *out_user_id);
 char *create_token(int user_id);
 bool verify_password(const char *input_pass, const char *hashed_pass);
+
